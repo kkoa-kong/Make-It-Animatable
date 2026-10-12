@@ -13,11 +13,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from fastapi.exceptions import RequestValidationError
+from api_animations import AnimationCatalog
+from api_input import input_payload, save_fbx, save_glb
 from api_jobs import JobStore
 from api_mesh_input import prepare_mesh
 
@@ -39,6 +43,7 @@ CHECKPOINT_DIR = Path(os.getenv("MIA_CHECKPOINT_DIR", str(ROOT / "output" / "bes
 HF_HOME = os.getenv("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 HY3DGEN_MODELS = Path(os.getenv("HY3DGEN_MODELS", str(Path.home() / ".cache" / "hy3dgen")))
 JOBS_DIR = Path(os.getenv("MIA_JOBS_DIR", str(ROOT / ".cache" / "api-jobs")))
+ANIMATIONS_DIR = Path(os.getenv("MIA_ANIMATIONS_DIR", str(ROOT / "data" / "mixamo")))
 
 MESH_EXTENSIONS = frozenset({".glb", ".gltf", ".obj", ".stl", ".ply", ".fbx"})
 ANIMATION_EXTENSIONS = frozenset({".fbx"})
@@ -46,10 +51,9 @@ REST_POSES = Literal["T-pose", "A-pose", "大-pose", "No"]
 REST_PARTS = Literal["Fingers", "Arms", "Legs", "Head"]
 
 
-class GenerateRequest(BaseModel):
+class GenerateOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    input_url: str = Field(min_length=1, description="Public HTTP(S) URL of a mesh file")
     input_format: str | None = Field(default=None, description="Required only when the URL path has no file suffix")
     input_no_fingers: bool = False
     input_rest_pose: REST_POSES = "No"
@@ -59,7 +63,8 @@ class GenerateRequest(BaseModel):
     input_bw_vis_bone: str = "LeftArm"
     input_restore_global: bool = False
     input_reset_to_rest: bool = True
-    input_animation_url: str | None = Field(default=None, description="Optional public HTTP(S) Mixamo FBX URL")
+    input_animation_url: str | None = Field(default=None, min_length=1, description="Optional public HTTP(S) Mixamo FBX URL")
+    animation_id: UUID | None = Field(default=None, description="Unique Motion ID from the local animation library")
     input_retarget: bool = True
     input_inplace: bool = True
 
@@ -82,9 +87,21 @@ class GenerateRequest(BaseModel):
         if extension not in MESH_EXTENSIONS:
             raise ValueError(f"input_format must be one of {sorted(MESH_EXTENSIONS)}")
         return extension
+    @model_validator(mode="after")
+    def validate_animation_selection(self) -> "GenerateOptions":
+        if self.animation_id is not None and self.input_animation_url is not None:
+            raise ValueError("animation_id and input_animation_url are mutually exclusive")
+        return self
+
+
+class GenerateRequest(GenerateOptions):
+    input_url: str | None = Field(default=None, min_length=1, description="Public HTTP(S) mesh URL; absent for uploaded GLB")
+
 
     @model_validator(mode="after")
     def validate_input_url_suffix(self) -> "GenerateRequest":
+        if self.input_url is None:
+            return self
         suffix = Path(urlsplit(self.input_url).path).suffix.lower()
         if not suffix and self.input_format is None:
             raise ValueError("input_format is required when input_url has no file suffix")
@@ -95,6 +112,10 @@ class GenerateRequest(BaseModel):
         return self
 
 
+class URLGenerateRequest(GenerateRequest):
+    input_url: str = Field(min_length=1, description="Public HTTP(S) URL of a mesh file")
+
+
 _status_lock = threading.Lock()
 _status = "starting"
 _startup_error: str | None = None
@@ -102,6 +123,8 @@ _running_jobs = 0
 _jobs = JobStore(JOBS_DIR)
 _job_queue: queue.Queue[str | None] = queue.Queue()
 _stopping = threading.Event()
+_catalog = AnimationCatalog(ANIMATIONS_DIR)
+_catalog_error: str | None = None
 
 # The upstream computational stages return Gradio component updates keyed by
 # component instances. Give them inert keys; this API never builds or serves a UI.
@@ -176,6 +199,13 @@ async def lifespan(_: FastAPI):
     _job_queue = queue.Queue()
     _jobs.initialize()
     _stopping.clear()
+    global _catalog_error
+    try:
+        await asyncio.to_thread(_catalog.load)
+        _catalog_error = None
+    except (OSError, ValueError) as exc:
+        _catalog_error = str(exc)
+        logger.error("Local animation library unavailable: %s", exc)
     await asyncio.to_thread(_load_models)
     worker = threading.Thread(target=_process_jobs, name="mia-v2-jobs")
     if _status == "ready":
@@ -217,6 +247,12 @@ def info() -> dict[str, object]:
         "running_jobs": _running_jobs,
         "max_concurrency": 1,
         "input_formats": sorted(MESH_EXTENSIONS),
+        "upload_formats": [".glb"],
+        "animation_upload_formats": [".fbx"],
+        "animation_library": {
+            "status": "ready" if _catalog_error is None else "unavailable",
+            "count": len(_catalog) if _catalog_error is None else 0,
+        },
         "output_format": "application/zip",
         "submission": "asynchronous",
         "job_status_url": "/jobs/{job_id}",
@@ -231,6 +267,7 @@ def info() -> dict[str, object]:
             "input_restore_global",
             "input_reset_to_rest",
             "input_animation_url",
+            "animation_id",
             "input_retarget",
             "input_inplace",
         ],
@@ -240,20 +277,86 @@ def info() -> dict[str, object]:
     return result
 
 
-def _download_inputs(request: GenerateRequest, work_dir: Path) -> tuple[Path, Path | None]:
-    extension = request.input_format or Path(urlsplit(request.input_url).path).suffix.lower()
-    input_path = download_url(
-        request.input_url,
-        work_dir,
-        max_bytes=MAX_INPUT_BYTES,
-        timeout_seconds=DOWNLOAD_TIMEOUT,
-        allowed_extensions=MESH_EXTENSIONS,
-        fallback_extension=extension,
-    )
-    input_path = input_path.rename(work_dir / f"character{extension}")
+def _require_catalog() -> AnimationCatalog:
+    if _catalog_error is not None:
+        raise HTTPException(status_code=503, detail=f"animation library unavailable: {_catalog_error}")
+    return _catalog
+
+
+@app.get("/animations")
+def animations(
+    q: str = "",
+    name: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    return _require_catalog().search(q=q, name=name, limit=limit, offset=offset)
+
+
+@app.get("/animations/{motion_id}")
+def animation_info(motion_id: str) -> dict:
+    catalog = _require_catalog()
+    record = catalog.get(motion_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="animation not found")
+    return {**record, "dataset": catalog.dataset, "revision": catalog.revision}
+
+
+@app.get("/animations/{motion_id}/file")
+def animation_file(motion_id: str) -> FileResponse:
+    catalog = _require_catalog()
+    try:
+        path = catalog.path(motion_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="animation not found") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=410, detail="animation file is missing") from exc
+    return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+
+
+def _animation_snapshot(request: GenerateRequest) -> dict | None:
+    if request.animation_id is None:
+        return None
+    catalog = _require_catalog()
+    record = catalog.get(str(request.animation_id))
+    if record is None:
+        raise HTTPException(status_code=404, detail="animation not found")
+    try:
+        catalog.path(str(request.animation_id))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=410, detail="animation file is missing") from exc
+    return {**record, "dataset": catalog.dataset, "revision": catalog.revision}
+
+
+def _prepare_inputs(
+    request: GenerateRequest, work_dir: Path, *, uploaded: bool = False, uploaded_animation: bool = False
+) -> tuple[Path, Path | None]:
+    if uploaded:
+        input_path = work_dir / "character.glb"
+        if not input_path.is_file():
+            raise ValueError("persisted GLB upload is missing")
+    else:
+        if request.input_url is None:
+            raise ValueError("mesh URL or persisted GLB upload is required")
+        extension = request.input_format or Path(urlsplit(request.input_url).path).suffix.lower()
+        input_path = download_url(
+            request.input_url,
+            work_dir,
+            max_bytes=MAX_INPUT_BYTES,
+            timeout_seconds=DOWNLOAD_TIMEOUT,
+            allowed_extensions=MESH_EXTENSIONS,
+            fallback_extension=extension,
+        )
+        input_path = input_path.rename(work_dir / f"character{extension}")
 
     animation_path: Path | None = None
-    if request.input_animation_url:
+    if uploaded_animation:
+        animation_path = work_dir / "animation.fbx"
+        if not animation_path.is_file():
+            raise ValueError("persisted FBX animation upload is missing")
+    elif request.animation_id is not None:
+        animation_path = _require_catalog().path(str(request.animation_id))
+    elif request.input_animation_url:
         animation_path = download_url(
             request.input_animation_url,
             work_dir,
@@ -265,7 +368,12 @@ def _download_inputs(request: GenerateRequest, work_dir: Path) -> tuple[Path, Pa
     return prepare_mesh(input_path), animation_path
 
 
-def _run_pipeline(request: GenerateRequest, input_path: Path, animation_path: Path | None) -> Path:
+def _run_pipeline(
+    request: GenerateRequest,
+    input_path: Path,
+    animation_path: Path | None,
+    animation: dict | None = None,
+) -> Path:
     db = app_v2.DB()
     try:
         for _ in app_v2._pipeline(
@@ -314,7 +422,8 @@ def _run_pipeline(request: GenerateRequest, input_path: Path, animation_path: Pa
                 json.dumps(
                     {
                         "model": MODEL_NAME,
-                        "options": request.model_dump(exclude={"input_url", "input_animation_url"}),
+                        "options": request.model_dump(mode="json", exclude={"input_url", "input_animation_url"}),
+                        "animation": animation,
                         "artifacts": included,
                     },
                     ensure_ascii=False,
@@ -352,9 +461,17 @@ def _process_jobs() -> None:
             _running_jobs = 1
         try:
             _jobs.update(job_id, "running")
-            request = GenerateRequest.model_validate(job["request"])
-            input_path, animation_path = _download_inputs(request, work_dir)
-            _run_pipeline(request, input_path, animation_path)
+            payload = dict(job["request"])
+            uploaded = payload.pop("_uploaded_input", False)
+            uploaded_animation = payload.pop("_uploaded_animation", False)
+            animation = payload.pop("_animation", None)
+            request = GenerateRequest.model_validate(payload)
+            if request.animation_id is not None and animation != _animation_snapshot(request):
+                raise ValueError("animation library metadata changed since task submission")
+            input_path, animation_path = _prepare_inputs(
+                request, work_dir, uploaded=uploaded, uploaded_animation=uploaded_animation
+            )
+            _run_pipeline(request, input_path, animation_path, animation)
             _jobs.update(job_id, "succeeded")
         except Exception as exc:
             logger.exception("MIA v2 job %s failed", job_id)
@@ -381,15 +498,73 @@ def _process_jobs() -> None:
                 _running_jobs = 0
 
 
-@app.post("/generate", status_code=202)
-def generate(request: GenerateRequest) -> dict:
+@app.post(
+    "/generate",
+    status_code=202,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {"schema": URLGenerateRequest.model_json_schema()},
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "input_file": {"type": "string", "format": "binary", "description": "GLB v2; mutually exclusive with options.input_url"},
+                            "animation_file": {"type": "string", "format": "binary", "description": "Binary animation FBX; mutually exclusive with options.input_animation_url and options.animation_id"},
+                            "options": {
+                                "type": "string",
+                                "description": "JSON generation options, including input_url, input_animation_url or animation_id as applicable",
+                            },
+                        },
+                    }
+                },
+            },
+        }
+    },
+)
+async def generate(http_request: Request) -> dict:
     with _status_lock:
         status, error = _status, _startup_error
     if status != "ready" or _stopping.is_set():
         raise HTTPException(status_code=503, detail=error or "worker is not ready")
-    job = _jobs.create(request.model_dump())
-    _job_queue.put(job["job_id"])
-    return _public_job(job)
+    async with input_payload(http_request, MAX_INPUT_BYTES) as (options, input_upload, animation_upload):
+        try:
+            request = GenerateRequest.model_validate(options)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        if (request.input_url is not None) == (input_upload is not None):
+            raise HTTPException(status_code=422, detail="provide exactly one of input_url and input_file")
+        if animation_upload is not None and (
+            request.input_animation_url is not None or request.animation_id is not None
+        ):
+            raise HTTPException(status_code=422, detail="animation_file, input_animation_url and animation_id are mutually exclusive")
+        if input_upload is not None:
+            if request.input_format not in (None, ".glb"):
+                raise HTTPException(status_code=422, detail="uploaded input_format must be glb")
+            request.input_format = ".glb"
+        animation = _animation_snapshot(request)
+        payload = request.model_dump(mode="json")
+        payload["_animation"] = animation
+        input_staging = None
+        animation_staging = None
+        try:
+            if input_upload is not None:
+                input_staging = await asyncio.to_thread(save_glb, input_upload, MAX_INPUT_BYTES, JOBS_DIR)
+                payload["_uploaded_input"] = True
+            if animation_upload is not None:
+                animation_staging = await asyncio.to_thread(save_fbx, animation_upload, MAX_INPUT_BYTES, JOBS_DIR)
+                payload["_uploaded_animation"] = True
+            job = await asyncio.to_thread(
+                _jobs.create, payload, input_file=input_staging, animation_file=animation_staging
+            )
+        finally:
+            for path in (input_staging, animation_staging):
+                if path is not None:
+                    path.unlink(missing_ok=True)
+        _job_queue.put(job["job_id"])
+        return _public_job(job)
 
 
 @app.get("/jobs/{job_id}")

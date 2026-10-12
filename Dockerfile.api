@@ -8,7 +8,8 @@ ENV PYTHONUNBUFFERED=1 \
     HY3DGEN_MODELS=/models/hunyuan \
     MIA_CHECKPOINT_DIR=/models/mia-v2 \
     PORT=8081 \
-    MIA_JOBS_DIR=/var/lib/mia-v2/jobs
+    MIA_JOBS_DIR=/var/lib/mia-v2/jobs \
+    MIA_ANIMATIONS_DIR=/models/mixamo
 
 WORKDIR /app
 

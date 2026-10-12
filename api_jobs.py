@@ -50,7 +50,13 @@ class JobStore:
         finally:
             connection.close()
 
-    def create(self, request: dict) -> dict:
+    def create(
+        self,
+        request: dict,
+        *,
+        input_file: Path | None = None,
+        animation_file: Path | None = None,
+    ) -> dict:
         """Create a queued job, rolling back both resources on ordinary failure."""
         request_json = json.dumps(request)
         job_id = uuid4().hex
@@ -73,8 +79,14 @@ class JobStore:
                 )
                 job_directory.mkdir()
                 directory_created = True
+                if input_file is not None:
+                    input_file.replace(job_directory / "character.glb")
+                if animation_file is not None:
+                    animation_file.replace(job_directory / "animation.fbx")
         except BaseException:
             if directory_created:
+                (job_directory / "character.glb").unlink(missing_ok=True)
+                (job_directory / "animation.fbx").unlink(missing_ok=True)
                 job_directory.rmdir()
             raise
         finally:
