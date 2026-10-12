@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
@@ -17,10 +18,12 @@ from uuid import UUID
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from fastapi.exceptions import RequestValidationError
 from api_animations import AnimationCatalog
+from api_artifacts import artifact_info, describe_archive, stream_artifact
 from api_input import input_payload, save_fbx, save_glb
 from api_jobs import JobStore
 from api_mesh_input import prepare_mesh
@@ -44,6 +47,7 @@ HF_HOME = os.getenv("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 HY3DGEN_MODELS = Path(os.getenv("HY3DGEN_MODELS", str(Path.home() / ".cache" / "hy3dgen")))
 JOBS_DIR = Path(os.getenv("MIA_JOBS_DIR", str(ROOT / ".cache" / "api-jobs")))
 ANIMATIONS_DIR = Path(os.getenv("MIA_ANIMATIONS_DIR", str(ROOT / "data" / "mixamo")))
+_ui_installed = False
 
 MESH_EXTENSIONS = frozenset({".glb", ".gltf", ".obj", ".stl", ".ply", ".fbx"})
 ANIMATION_EXTENSIONS = frozenset({".fbx"})
@@ -255,6 +259,7 @@ def info() -> dict[str, object]:
         },
         "output_format": "application/zip",
         "submission": "asynchronous",
+        "ui_enabled": _ui_installed,
         "job_status_url": "/jobs/{job_id}",
         "job_result_url": "/jobs/{job_id}/result",
         "parameters": [
@@ -283,14 +288,37 @@ def _require_catalog() -> AnimationCatalog:
     return _catalog
 
 
+def _with_category(record: dict) -> dict:
+    category = _require_catalog().category(record["motion_id"])
+    return {
+        **record,
+        "category_id": category["id"],
+        "category_label": category["label"],
+    }
+
+
+@app.get("/animations/categories")
+def animation_categories() -> dict:
+    return _require_catalog().categories()
+
+
 @app.get("/animations")
 def animations(
     q: str = "",
     name: str | None = None,
+    category: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    return _require_catalog().search(q=q, name=name, limit=limit, offset=offset)
+    try:
+        result = _require_catalog().search(
+            q=q, name=name, limit=limit, offset=offset,
+            category=None if category in (None, "", "all") else category,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result["items"] = [_with_category(record) for record in result["items"]]
+    return result
 
 
 @app.get("/animations/{motion_id}")
@@ -299,7 +327,7 @@ def animation_info(motion_id: str) -> dict:
     record = catalog.get(motion_id)
     if record is None:
         raise HTTPException(status_code=404, detail="animation not found")
-    return {**record, "dataset": catalog.dataset, "revision": catalog.revision}
+    return {**_with_category(record), "dataset": catalog.dataset, "revision": catalog.revision}
 
 
 @app.get("/animations/{motion_id}/file")
@@ -575,8 +603,7 @@ def job_status(job_id: str) -> dict:
     return _public_job(job)
 
 
-@app.get("/jobs/{job_id}/result")
-def job_result(job_id: str) -> FileResponse:
+def _job_archive(job_id: str) -> Path:
     job = _jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -585,11 +612,62 @@ def job_result(job_id: str) -> FileResponse:
     archive_path = _jobs.directory(job_id) / "mia-v2-result.zip"
     if not archive_path.is_file():
         raise HTTPException(status_code=410, detail="job result is no longer available")
+    return archive_path
+
+
+@app.get("/jobs/{job_id}/result")
+def job_result(job_id: str) -> FileResponse:
     return FileResponse(
-        archive_path,
-        media_type="application/zip",
-        filename="mia-v2-result.zip",
+        _job_archive(job_id), media_type="application/zip", filename="mia-v2-result.zip"
     )
+
+
+@app.get("/jobs/{job_id}/artifacts")
+def job_artifacts(job_id: str) -> dict:
+    result = describe_archive(_job_archive(job_id))
+    for item in result["items"]:
+        item["url"] = f"/jobs/{job_id}/artifacts/{item['name']}"
+    return {"job_id": job_id, **result}
+
+
+@app.get("/jobs/{job_id}/artifacts/{name}")
+def job_artifact(job_id: str, name: str) -> StreamingResponse:
+    path = _job_archive(job_id)
+    try:
+        info = artifact_info(path, name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="artifact not found") from exc
+    return StreamingResponse(
+        stream_artifact(path, name),
+        media_type=info["media_type"],
+        headers={
+            "Content-Length": str(info["size"]),
+            "Content-Disposition": f'inline; filename="{name}"',
+        },
+    )
+
+
+def enable_ui() -> None:
+    global _ui_installed
+    if _ui_installed:
+        return
+    web_root = ROOT / "web"
+    if not (web_root / "index.html").is_file():
+        raise FileNotFoundError(f"UI assets are missing: {web_root}")
+
+    @app.get("/", include_in_schema=False)
+    def ui_index() -> FileResponse:
+        return FileResponse(web_root / "index.html", media_type="text/html")
+
+    @app.get("/ui/demo", include_in_schema=False)
+    def ui_demo() -> FileResponse:
+        path = ROOT / "data" / "examples" / "ninja.glb"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="example character is not installed")
+        return FileResponse(path, media_type="model/gltf-binary", filename="ninja.glb")
+
+    app.mount("/ui", StaticFiles(directory=web_root), name="ui")
+    _ui_installed = True
 
 
 def _serve_http() -> None:
@@ -603,6 +681,11 @@ _server_holder: dict[str, uvicorn.Server] = {}
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="MIA V2 API and optional 3D animation library UI")
+    parser.add_argument("--ui", action="store_true", help="serve the HTML/Three.js interface at /")
+    cli = parser.parse_args()
+    if cli.ui:
+        enable_ui()
     server_thread = threading.Thread(target=_serve_http, name="mia-v2-http", daemon=True)
     server_thread.start()
     logger.info("MIA v2 API starting on 0.0.0.0:%d", API_PORT)
@@ -637,6 +720,10 @@ def main() -> None:
     finally:
         stop_server()
         server_thread.join()
+
+
+if os.getenv("MIA_UI", "0") == "1":
+    enable_ui()
 
 
 if __name__ == "__main__":

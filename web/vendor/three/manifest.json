@@ -1,0 +1,44 @@
+{
+  "package": "three",
+  "version": "0.180.0",
+  "source": "https://registry.npmmirror.com/three/-/three-0.180.0.tgz",
+  "integrity": "sha512-o+qycAMZrh+TsE01GqWUxUIKR1AL0S8pq7zDkYOQw8GqfX8b8VoCKYUoHbhiX5j+7hr8XsuHDVU6+gkQJQKg9w==",
+  "files": [
+    {
+      "path": "build/three.core.min.js",
+      "sha256": "61ba0df005b05991361d040d8ff670e1aadfd0ce7aeebd1fdb0725957a8957de"
+    },
+    {
+      "path": "build/three.module.min.js",
+      "sha256": "e2b5ee6bccd38fd6d8a2428546b83c5f2426d84b152ef82be8055556e3b40eb6"
+    },
+    {
+      "path": "examples/jsm/controls/OrbitControls.js",
+      "sha256": "b97879c748170baadeb3fb84cea1ffdf4674e283dc06042f34e2acb95a76042c"
+    },
+    {
+      "path": "examples/jsm/curves/NURBSCurve.js",
+      "sha256": "bef2607618a7778455e71a1f0bd206951c382d313e2e245808cc7d3533d60fb6"
+    },
+    {
+      "path": "examples/jsm/curves/NURBSUtils.js",
+      "sha256": "c6bd7c4137d585098923f189687898ea3e8762ea3ecbe255d749a56353894379"
+    },
+    {
+      "path": "examples/jsm/libs/fflate.module.js",
+      "sha256": "209a4412eb48ce609edb4391992a792ffcc3983d30ee7e2b0b89a8c470f3cd8a"
+    },
+    {
+      "path": "examples/jsm/loaders/FBXLoader.js",
+      "sha256": "d97724a6bea228003e02c64651d969a9a62003a00be314ef6995c390116f547d"
+    },
+    {
+      "path": "examples/jsm/loaders/GLTFLoader.js",
+      "sha256": "67ac5551fdafa6e349bd80c8f8e5e39c136d6b2fb1ad647db9abb21dc86f9e4a"
+    },
+    {
+      "path": "examples/jsm/utils/BufferGeometryUtils.js",
+      "sha256": "fda7e946b8e0b5ab39b779206589e7a1079a22eb24efb89d7223e03fdfb1f751"
+    }
+  ]
+}

@@ -10,6 +10,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=CUDA_VISIBLE_DEVICES=4
 Environment=GPU_ID=0
 Environment=PORT=8081
+Environment=MIA_UI=1
 Environment=MIA_JOBS_DIR=/data/Make-It-Animatable/.cache/api-jobs
 Environment=MIA_ANIMATIONS_DIR=/data/Make-It-Animatable/data/mixamo
 EnvironmentFile=-/etc/default/mia-v2-api

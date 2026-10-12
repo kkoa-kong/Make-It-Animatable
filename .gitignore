@@ -172,3 +172,7 @@ output
 *.ply
 *.blend
 util/FBX2glTF
+
+# Pinned browser runtime modules are source assets, not Python build output.
+!web/vendor/three/build/
+!web/vendor/three/build/*.js

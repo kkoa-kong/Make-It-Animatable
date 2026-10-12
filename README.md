@@ -85,7 +85,10 @@ The API listens on **8081**. Model and animation sources are selected independen
 | `POST /generate` | JSON or multipart request; returns `202` after uploaded files are validated and persisted, before inference |
 | `GET /jobs/{job_id}` | `queued`, `running`, `succeeded` or `failed`; failures include `error` and `error_code` |
 | `GET /jobs/{job_id}/result` | Downloads the successful ZIP; `409` before success, `404` for unknown jobs, `410` if the result was removed |
+| `GET /jobs/{job_id}/artifacts` | Manifest metadata and actual per-file preview/download links |
+| `GET /jobs/{job_id}/artifacts/{name}` | Stream a known generated artifact directly from the result ZIP |
 | `GET /animations` | Paginated deterministic name/keyword/description search returning unique Motion IDs |
+| `GET /animations/categories` | Keyword-derived UI groups, counts and classification version |
 | `GET /animations/{motion_id}` | Original metadata and pinned dataset revision |
 | `GET /animations/{motion_id}/file` | Original pure animation FBX |
 
@@ -136,6 +139,28 @@ These dataset-specific files use their official Hugging Face source; no equivale
 
 The library files are ignored by Git and excluded from the image; retain them on disk and mount the complete directory read-only in Docker.
 
+#### Web / H5 animation studio
+
+Enable the optional HTML/Three.js interface on the same worker and port:
+
+```bash
+CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py --ui
+# Equivalent environment configuration:
+MIA_UI=1 CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py
+```
+
+Open `http://agent-models-api.singularity-ai.com:8081/` through your existing access path, or `http://127.0.0.1:8081/` on the host. Without `--ui` or `MIA_UI=1`, the command remains API-only. The supplied development systemd unit now enables `MIA_UI=1`; this does not launch a second GPU worker or Gradio.
+
+The development service is already running; access its URL directly. Stop `mia-v2-api.service` before using a foreground command so two workers do not compete for the same port and job directory.
+
+The responsive dark, flat studio supports GLB file/drop upload, eight keyword-derived motion groups, name/description search, pagination and unique-ID selection. It previews the original uploaded GLB and the selected pure-FBX source skeleton separately; only submitting the generation task produces a bound character. Actual upload progress and queued/running/failed/succeeded states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
+
+Successful tasks expose the animated GLB, animated skeleton/joint overlays, predicted joint GLBs, FBX and complete ZIP. Playback, pause, seek, speed, orbit/zoom and reset use the real Three.js scene and animation clips. Requires a modern WebGL2 browser; if 3D initialization fails, generation and downloads remain available with an explicit preview error.
+
+All browser dependencies are served locally under `/ui/`: pinned Three.js 0.180.0 and only required loader/control modules, fetched from the HTTPS npmmirror registry with npm SHA-512 integrity validation, plus licensed Noto Sans CJK SC UI/Latin font subsets. No Node build step or runtime external CDN is needed. Licenses and source/checksum manifests are included. If UI literals change, the optional font rebuild helper is `.venv/bin/python prepare_ui_fonts.py`, using the installed Ubuntu `fonts-noto-cjk` source and existing `fontTools`/Brotli environment.
+
+The optional demo loads the real `data/examples/ninja.glb` when installed; it is labelled as an ungenerated example and is not submitted until explicitly selected. A deployment without example assets can still upload its own models. Frontend styling does not change raw motion descriptions: category labels are deterministic keyword groups (`keyword-v1`), not official Mixamo labels or LLM classification.
+
 #### Temporary host service
 
 Use the existing Python 3.11 `.venv`, V2 checkpoints, Hunyuan VAE cache and `data/Mixamo/bones.fbx`. Start directly for foreground development:
@@ -171,6 +196,7 @@ docker buildx build --load --build-context wheelhouse=/data/mia-build-wheels \
 # Stop the temporary worker before handing its GPU and port to Docker:
 sudo systemctl disable --now mia-v2-api.service
 docker run --rm --gpus '"device=4"' -p 8081:8081 \
+  -e MIA_UI=1 \
   -v "$PWD/output/best/v2:/models/mia-v2:ro" \
   -v "$HOME/.cache/hy3dgen:/models/hunyuan:ro" \
   -v "$PWD/data/mixamo:/models/mixamo:ro" \

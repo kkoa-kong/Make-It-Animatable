@@ -120,6 +120,41 @@ class AnimationCatalogTests(unittest.TestCase):
         self.assertEqual(self.catalog.search()["items"], all_items)
         self.assertEqual(self.catalog.search(q="walk")["items"], ranked)
 
+    def test_category_groups_preserve_metadata_and_partition_the_library(self):
+        records = copy.deepcopy(self.records)
+        cases = [
+            ("Samba Dancing", "dance"), ("Punching", "combat"), ("Breathing Idle", "idle"),
+            ("Unrecognized Motion", "other"), ("Walking", "locomotion"),
+        ]
+        for record, (prompt, _) in zip(records, cases):
+            record["prompt"] = prompt
+            record["description"] = ""
+        self.write_index(records)
+        self.catalog.load()
+        categories = self.catalog.categories()
+        self.assertEqual(sum(item["count"] for item in categories["items"]), len(records))
+        found = []
+        for record, (_, category_id) in zip(records, cases):
+            self.assertEqual(self.catalog.category(record["motion_id"])["id"], category_id)
+            self.assertEqual(self.catalog.get(record["motion_id"]), record)
+            result = self.catalog.search(category=category_id)
+            self.assertEqual(result["items"], [record])
+            found.extend(item["motion_id"] for item in result["items"])
+        self.assertEqual(set(found), {record["motion_id"] for record in records})
+        with self.assertRaises(ValueError):
+            self.catalog.search(category="unknown")
+
+    def test_category_filter_applies_before_pagination_and_keyword_matching(self):
+        records = copy.deepcopy(self.records)
+        for record in records[:2]:
+            record["prompt"] = "Samba"
+            record["description"] = "Dancing"
+        self.write_index(records)
+        self.catalog.load()
+        result = self.catalog.search(q="samba", category="dance", limit=1, offset=1)
+        expected = sorted(records[:2], key=lambda record: record["filename"])
+        self.assertEqual(result, {"total": 2, "limit": 1, "offset": 1, "items": expected[1:]})
+
     def test_pagination_and_query_argument_validation(self):
         self.catalog.load()
         for arguments in (

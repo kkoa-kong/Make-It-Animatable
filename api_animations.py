@@ -5,6 +5,7 @@ import re
 import unicodedata
 from pathlib import Path, PurePosixPath
 from uuid import UUID
+from api_categories import CATEGORY_LABELS, CATEGORY_RULES, CLASSIFICATION, classify
 
 
 DATASET = "Linzhan/Mixamo-Animations-Characters"
@@ -64,6 +65,7 @@ class AnimationCatalog:
         self._root = Path(root).resolve()
         self._records: dict[str, dict] = {}
         self._search_fields: dict[str, tuple[str, str, str, str]] = {}
+        self._category_ids: dict[str, str] = {}
         self._loaded = False
 
     def _require_loaded(self) -> None:
@@ -106,6 +108,7 @@ class AnimationCatalog:
         self._loaded = False
         self._records = {}
         self._search_fields = {}
+        self._category_ids = {}
         index_path = (self._root / "index.json").resolve()
         if not index_path.is_relative_to(self._root):
             raise ValueError("Animation index escapes the catalog root")
@@ -156,6 +159,9 @@ class AnimationCatalog:
             search_fields[key] = (prompt, filename, stem, description)
         self._records = records
         self._search_fields = search_fields
+        self._category_ids = {
+            key: classify(" ".join(search_fields[key])) for key in records
+        }
         self._loaded = True
 
     def get(self, motion_id: str) -> dict | None:
@@ -173,7 +179,10 @@ class AnimationCatalog:
             raise KeyError(motion_id)
         return self._asset_path(record["relative_path"])
 
-    def search(self, q: str = "", name: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+    def search(
+        self, q: str = "", name: str | None = None, limit: int = 20, offset: int = 0,
+        category: str | None = None,
+    ) -> dict:
         self._require_loaded()
         if not isinstance(q, str) or (name is not None and not isinstance(name, str)):
             raise ValueError("q and name must be strings")
@@ -181,11 +190,15 @@ class AnimationCatalog:
             raise ValueError("limit must be a positive integer")
         if type(offset) is not int or offset < 0:
             raise ValueError("offset must be a non-negative integer")
+        if category is not None and category not in CATEGORY_LABELS:
+            raise ValueError("unknown animation category")
         query = _normalize(q)
         tokens = query.split()
         exact_name = _normalize(name) if name is not None else None
         matches = []
         for key, record in self._records.items():
+            if category is not None and self._category_ids[key] != category:
+                continue
             prompt, filename, stem, description = self._search_fields[key]
             if exact_name is not None and prompt != exact_name:
                 continue
@@ -206,4 +219,29 @@ class AnimationCatalog:
             "limit": limit,
             "offset": offset,
             "items": [item[3].copy() for item in matches[offset:offset + limit]],
+        }
+
+    def category(self, motion_id: str) -> dict | None:
+        self._require_loaded()
+        try:
+            key = _motion_key(motion_id)
+        except ValueError:
+            return None
+        category_id = self._category_ids.get(key)
+        if category_id is None:
+            return None
+        return {"id": category_id, "label": CATEGORY_LABELS[category_id]}
+
+    def categories(self) -> dict:
+        self._require_loaded()
+        counts = dict.fromkeys(CATEGORY_LABELS, 0)
+        for category_id in self._category_ids.values():
+            counts[category_id] += 1
+        return {
+            "total": len(self._records),
+            "classification": CLASSIFICATION,
+            "items": [
+                {"id": category_id, "label": label, "count": counts[category_id]}
+                for category_id, label, _ in CATEGORY_RULES
+            ],
         }

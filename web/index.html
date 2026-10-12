@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#202127">
+  <title>Motion Studio · 让角色动起来</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+  <script type="importmap">{"imports":{"three":"/ui/vendor/three/build/three.module.min.js","three/addons/":"/ui/vendor/three/examples/jsm/"}}</script>
+  <script type="module" src="/ui/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#library">跳转到动作库</a>
+  <div class="studio-shell">
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Motion Studio 首页"><span class="brand-mark" aria-hidden="true">m.</span><span>motion<span class="brand-sub">MAKE IT ANIMATABLE</span></span></a>
+      <nav aria-label="主导航"><a href="#workspace">创作空间</a><a href="#library">动作资料库 <span class="nav-arrow" aria-hidden="true">↗</span></a></nav>
+      <div class="service-indicator" id="service-health" role="status"><span class="status-dot"></span><span id="service-label">正在连接服务</span><button class="icon-button" id="refresh-health" type="button" aria-label="刷新服务状态">↻</button></div>
+    </header>
+    <main id="top">
+      <section class="workspace" id="workspace" aria-labelledby="hero-title">
+        <div class="intro">
+          <div class="eyebrow"><span class="tiny-rule"></span> YOUR CHARACTER. IN MOTION.</div>
+          <h1 id="hero-title">让灵感，<br>动起来<span class="accent-period">.</span></h1>
+          <p class="intro-copy">从静态角色到生动表达。上传你的 3D 模型，<br class="desktop-break">从动作库挑选下一段故事。</p>
+          <div class="workflow-heading"><span class="step-index">01</span><h2>带上你的角色</h2><span class="format-label">GLB</span></div>
+          <label class="dropzone" id="dropzone" for="model-file">
+            <span class="upload-symbol" aria-hidden="true">↑</span>
+            <span class="upload-text"><strong id="file-name">拖放 GLB，或点击上传</strong><span id="file-detail">支持单个 .glb 文件 · 本地预览</span></span>
+            <input id="model-file" type="file" accept=".glb,model/gltf-binary" aria-label="上传 GLB 角色模型">
+          </label>
+          <div class="upload-actions"><button class="text-button" id="use-demo" type="button">使用示例角色 <span aria-hidden="true">↗</span></button><button class="text-button" id="preview-upload" type="button" disabled>查看我的模型</button></div>
+          <p class="inline-message" id="file-message" role="status"></p>
+          <div class="selection-panel">
+            <div class="workflow-heading"><span class="step-index">02</span><h2>选择一段动作</h2><a class="text-link" href="#library">浏览资料库 ↓</a></div>
+            <div class="selected-motion" id="selected-motion"><span class="selection-icon" aria-hidden="true">↗</span><div><strong id="selected-name">还没有选择动作</strong><span id="selected-detail">在下方动作卡片中选择，名称相同也有独立 ID。</span></div></div>
+            <button class="text-button" id="preview-motion" type="button" disabled>预览所选动作骨架 <span aria-hidden="true">↗</span></button>
+          </div>
+          <div class="run-options"><label><input id="inplace" type="checkbox" checked> 原地运动</label><label><input id="no-fingers" type="checkbox"> 不预测手指</label></div>
+          <button class="primary-button" id="generate" type="button" disabled><span>生成角色动画</span><span aria-hidden="true">↗</span></button>
+          <p class="run-hint" id="run-hint">上传角色并选择动作后开始。</p>
+        </div>
+        <div class="preview-panel">
+          <div class="preview-heading"><div><span class="eyebrow">LIVE VIEWPORT</span><h2>角色观察室</h2></div><span class="preview-badge" id="preview-label">示例角色 · 未生成</span></div>
+          <div class="viewport-wrap">
+            <div id="viewport" aria-label="可交互 3D 预览，拖动旋转，滚轮缩放"></div>
+            <div class="viewport-empty" id="viewport-empty"><span class="empty-monogram" aria-hidden="true">m.</span><p id="viewport-empty-text">正在加载示例角色</p></div>
+            <div class="viewport-corner" aria-hidden="true">X / Y / Z <span>3D SPACE</span></div>
+            <button class="reset-view icon-button" id="reset-view" type="button" aria-label="重置 3D 视角"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></svg></button>
+          </div>
+          <div class="viewer-message" id="viewer-message" role="status"></div>
+          <div class="view-toolbar"><div class="segmented-control" role="group" aria-label="显示方式"><button type="button" data-mode="model" aria-pressed="true">模型</button><button type="button" data-mode="skeleton" aria-pressed="false">骨架</button><button type="button" data-mode="joints" aria-pressed="false">关节</button></div><span class="viewer-stats" id="viewer-stats">真实模型 / 实时预览</span></div>
+          <div class="playback-bar"><button class="play-button" id="play-toggle" type="button" aria-label="播放动画" disabled>播放</button><span class="time-readout" id="time-current">0:00</span><input id="timeline" type="range" min="0" max="0" step="0.01" value="0" disabled aria-label="动画时间轴"><span class="time-readout" id="time-total">0:00</span><label class="speed-control"><span class="sr-only">播放速度</span><select id="speed" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label></div>
+          <div class="preview-footnote"><span id="preview-note">示例仅用于预览；点击「使用示例角色」才会作为输入。</span><button class="text-button" id="preview-demo" type="button">查看示例</button></div>
+        </div>
+      </section>
+      <section class="job-panel" id="job-panel" hidden aria-labelledby="job-title">
+        <div class="job-heading"><div><span class="eyebrow">GENERATION / ASYNC</span><h2 id="job-title">任务状态</h2></div><span class="job-state" id="job-state">准备提交</span></div>
+        <ol class="job-steps" aria-label="生成阶段"><li data-stage="upload">上传模型</li><li data-stage="queued">等待调度</li><li data-stage="running">绑定与生成</li><li data-stage="succeeded">结果就绪</li></ol>
+        <progress id="upload-progress" max="100" value="0" aria-label="真实文件上传进度" hidden></progress>
+        <p id="job-message" role="status" aria-live="polite"></p>
+        <p class="job-id" id="job-id"></p>
+        <div class="job-actions"><button class="secondary-button" id="retry-job" type="button" hidden>重新连接任务</button><button class="text-button" id="dismiss-job" type="button" hidden>清除任务记录</button><div class="artifact-actions" id="artifact-actions" hidden><button class="secondary-button" id="view-result" type="button" disabled>查看生成动画</button><button class="secondary-button" id="view-joints" type="button" disabled>查看预测关节</button><button class="secondary-button" id="view-coarse" type="button" disabled>查看粗预测关节</button><a class="download-button" id="download-result" download>下载完整结果 ZIP <span aria-hidden="true">↓</span></a></div></div>
+        <details id="artifact-details" hidden><summary>所有输出文件</summary><ul id="artifact-list"></ul></details>
+      </section>
+      <section class="library" id="library" aria-labelledby="library-title">
+        <div class="library-heading"><div><div class="eyebrow">THE MOTION COLLECTION</div><h2 id="library-title">每个动作，都有新可能<span class="accent-period">.</span></h2><p>本地动作素材库。分类来自英文关键词匹配，不代表官方或语义分类。</p></div><span class="library-count"><strong id="library-count">—</strong><span>动作素材</span></span></div>
+        <div class="library-tools"><div class="categories" id="categories" role="group" aria-label="按关键词分类筛选"><button class="category-button" type="button" data-category="" aria-pressed="true">全部</button></div><label class="search-box"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="animation-search" type="search" placeholder="搜索动作名称或描述" aria-label="搜索动作名称或描述" autocomplete="off"></label></div>
+        <div class="library-status"><p id="library-status" role="status" aria-live="polite">正在读取本地动作库…</p><button class="text-button" id="retry-library" type="button" hidden>重新加载</button><span class="metadata-note">帧数来自素材，不推算帧率或时长</span></div>
+        <div class="animation-grid" id="animation-grid" aria-busy="true"></div>
+        <div class="pagination"><span id="page-summary">—</span><div><button class="secondary-button" id="previous-page" type="button" disabled aria-label="上一页动作">← 上一页</button><button class="secondary-button" id="next-page" type="button" disabled aria-label="下一页动作">下一页 →</button></div></div>
+      </section>
+    </main>
+    <footer><a class="footer-wordmark" href="#top">make it move.</a><p>Make-It-Animatable <span> / </span> 本地创作，真实生成。</p><a href="/docs" target="_blank" rel="noopener">API 文档 ↗</a></footer>
+  </div>
+</body>
+</html>

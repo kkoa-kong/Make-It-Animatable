@@ -12,6 +12,23 @@ BASE='http://agent-models-api.singularity-ai.com:8081'
 
 生成接口异步执行：提交资源 → 返回任务 ID → 查询状态 → 下载结果。模型与动画分别选择来源，允许文件和 URL 交叉组合。
 
+## Web / H5 操作界面
+
+UI 模式启用后，直接在浏览器打开 `http://agent-models-api.singularity-ai.com:8081/`。当前开发 systemd 服务已配置 `MIA_UI=1`；前台替代运行可用 `CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py --ui`，也可设置 `MIA_UI=1`。不启用时仍是 API-only 模式。
+
+当前常驻服务已在运行，直接访问即可。需要前台启动时先停止已有 `mia-v2-api.service`，避免重复占用 8081 和同一个任务目录；UI 与 API 共用一个 Worker，不应另外启动第二个服务。
+
+界面使用本地 HTML/CSS/Three.js 和本地中英文字体，不依赖 Gradio、外部 CDN 或 Node 构建。支持桌面及 H5 窄屏布局，现代浏览器需支持 WebGL2。流程：
+
+1. 上传或拖放 GLB；可先本地预览。明确选择「使用示例角色」才会把实际示例文件作为输入。
+2. 按分类或原始英文名称/描述查找动作，选择具体的唯一 ID；源 FBX 可独立预览为动画骨架。
+3. 提交绑定任务，查看真实上传进度和异步状态。推理阶段不显示虚构百分比。
+4. 播放生成的 GLB，暂停、拖动时间轴、调整倍率、旋转缩放视角，切换骨架或关节点；还可查看预测关节 GLB。
+5. 下载完整 ZIP 或实际单个产物。页面刷新会重新查询上次任务，不会自动再次生成。
+
+示例角色读取 `data/examples/ninja.glb`；缺少示例资产时会明确提示，可以继续上传自己的模型。骨架源预览、上传的原始模型和已生成的绑定角色有独立标签，不把示例或源动作冒充生成结果。
+
+
 ## 1. 输入来源与互斥规则
 
 | 资源 | 来源 | 规则 |
@@ -67,6 +84,7 @@ GET /animations?q=walking&limit=20&offset=0
 | --- | --- |
 | `q` | 按文件名、动作名称和原始描述检索；所有归一化关键词都须匹配 |
 | `name` | 原始动作名称的归一化精确匹配；可能返回多个同名动作 |
+| `category` | 可选的关键词分组 ID；省略、空值或 `all` 为全部，未知值返回 `422` |
 | `limit` | 每页条数，默认 20，范围 1–100 |
 | `offset` | 分页起点，默认 0，须非负 |
 
@@ -96,6 +114,23 @@ curl -sS -G "$BASE/animations" \
 将返回记录的 `motion_id` 填入生成请求的 `animation_id`。原始动作名称存在 362 个重名分组，但 Motion ID 没有重复。
 
 检索是确定性的英文元数据检索：大小写、Unicode 和分隔符归一化，名称优先于描述匹配，排序稳定。不提供跨语言向量语义搜索，不自动把中文动作名称翻译为英文。
+
+### 分类接口
+
+```http
+GET /animations/categories
+```
+
+返回 `{total, classification, items}`，每个分组为 `{id, label, count}`。当前规则版本 `keyword-v1`，ID 为 `dance`、`fitness`、`combat`、`locomotion`、`acrobatics`、`gestures`、`idle`、`other`。每个动作只归入一个主要分组，数量合计覆盖完整动作库。
+
+```bash
+curl -sS "$BASE/animations/categories"
+curl -sS -G "$BASE/animations" \
+  --data-urlencode 'category=dance' \
+  --data-urlencode 'limit=20'
+```
+
+动作列表和详情额外提供 `category_id`、`category_label`。分组依据原始英文关键词，名称和描述不改写；这些不是 Mixamo 官方分类，也不是 LLM 语义分类。生成仍只接受唯一 `animation_id`，不接受分类或名字作为绑定选择。
 
 ### 指定动作详情与文件
 
@@ -245,6 +280,26 @@ unzip -l mia-v2-result.zip
 结果为 `application/zip`，包含 `animatable.fbx`、可用的 GLB 预览及中间产物、`manifest.json`。选择动画时输出带烘焙动画的 FBX。库内 ID 请求的 manifest 记录原始动作元数据、Motion ID、SHA-256 和数据集 revision；外部动画来源的 `animation` 字段为 `null`，不生成虚构的库内 ID。
 
 结果可重复下载。任务状态、排队任务和上传文件持久化保存；正常停止时等待当前任务完成，排队任务在启动后恢复。被进程异常退出中断的运行中任务标记为失败，不自动重试。上传输入在任务终止后清理，成功 ZIP 保留，无自动过期机制。
+
+### 单个产物与 3D 预览
+
+```http
+GET /jobs/{job_id}/artifacts
+GET /jobs/{job_id}/artifacts/{name}
+```
+
+列表返回 `job_id`、manifest 中的 `animation`、`options`，以及 `items`。每项包含实际文件 `name`、字节数 `size`、`media_type` 和相对 `url`。只列出 ZIP 中实际存在的已知产物，不生成假预览文件。
+
+```bash
+curl -sS "$BASE/jobs/$JOB_ID/artifacts"
+curl --fail -sS "$BASE/jobs/$JOB_ID/artifacts/animatable_preview.glb" \
+  -o animatable_preview.glb
+curl --fail -sS "$BASE/jobs/$JOB_ID/artifacts/animatable.fbx" \
+  -o animatable.fbx
+```
+
+`animatable_preview.glb` 用于播放绑定角色；`joints.glb`、`joints_coarse.glb` 为真实预测关节可视化。GLB 类型为 `model/gltf-binary`。单个文件直接从结果 ZIP 流式读取，不允许任意 ZIP 路径提取；未知产物 `404`、未成功任务 `409`、已移除结果 `410`。播放时长来自文件内实际 AnimationClip，不从原始帧数推算。
+
 
 ## 6. 错误说明
 
