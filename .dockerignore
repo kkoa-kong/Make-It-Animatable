@@ -11,3 +11,6 @@ data/*
 !data/Mixamo/
 data/Mixamo/*
 !data/Mixamo/bones.fbx
+!data/examples/
+data/examples/*
+!data/examples/ninja.glb

@@ -191,24 +191,31 @@ The API has no authentication. Restrict network access to your development clien
 The API image excludes model weights. Mount the three MIA v2 checkpoints at `/models/mia-v2` and the Hunyuan3D VAE files (`hunyuan3d-vae-v2-1/config.yaml` and `model.fp16.ckpt`) under `/models/hunyuan/tencent/Hunyuan3D-2.1/`:
 
 ```bash
-./prepare_api_wheels.sh /data/mia-build-wheels
-docker buildx build --load --build-context wheelhouse=/data/mia-build-wheels \
+./prepare_api_wheels.sh /data/mia-build-wheels-aliyun
+docker buildx build --load --build-context wheelhouse=/data/mia-build-wheels-aliyun \
   -f Dockerfile.api -t mia-v2-api:dev .
 
 # Stop the temporary worker before handing its GPU and port to Docker:
 sudo systemctl disable --now mia-v2-api.service
 docker run --rm --gpus '"device=4"' -p 8081:8081 \
-  -e MIA_UI=1 \
   -v "$PWD/output/best/v2:/models/mia-v2:ro" \
   -v "$HOME/.cache/hy3dgen:/models/hunyuan:ro" \
   -v "$PWD/data/mixamo:/models/mixamo:ro" \
   -v "$PWD/.cache/api-jobs:/var/lib/mia-v2/jobs" \
   mia-v2-api:dev
 ```
+Container deployment is API-only by default (`MIA_UI=0`): do not pass `--ui` or `MIA_UI=1` in the deployment command. The separately documented host UI is a development option, not the container startup mode.
+
 
 The Docker example assumes ordinary public DNS and outbound connectivity. If the container also uses a fake-IP gateway, configure its DNS and trusted-egress hostnames explicitly rather than disabling IP checks.
 
-The host prepares wheels using the pinned, locally validated Python 3.11 versions in `api-offline-requirements.txt`; this requires the existing `.venv` interpreter and `uv`. Ordinary packages default to Aliyun PyPI; override with `MIA_PIP_INDEX_URL` when preparing wheels. Specialized CUDA wheel sources remain available. PyTorch/CUDA are supplied by the base image. The image installs Python dependencies with networking disabled and `--no-index`, then runs `pip check`; a missing wheel fails the build. Base-image pulls and apt installation still require network access. Model weights and the host virtual environment are not copied into the image.
+The image contains an immutable snapshot of the API modules, `web/` assets and the `ninja.glb` UI demo; editing the host checkout does not update an existing image. Rebuild and recreate the container after code changes. Python dependencies are installed before copying business code, so unchanged dependency pins and wheelhouse inputs can reuse the dependency layer. The complete motion library and model weights remain external read-only mounts.
+
+The host prepares the 110 pinned runtime wheels in `api-offline-requirements.txt`, excluding notebook and training-only dependencies. Preparation requires the existing Linux x86_64 Python 3.11 `.venv`, `curl` with HTTP/2 support, and `uv` for source-only wheel builds. Downloads use curl HTTP/2 and default to Aliyun PyPI; override with `MIA_PIP_INDEX_URL`. Specialized CUDA wheel sources remain available. Matching cached wheels are CRC-checked and reused; downloaded wheels are checked against published SHA-256 values when supplied by their index. `SHA256SUMS` records the prepared artifacts.
+
+The upstream `bpy` 4.3.0 CPython 3.11 wheel incorrectly declares a CPython 3.9 tag internally. Preparation corrects only `WHEEL` and its `RECORD` entry so `pip check` can validate it; all binary members remain unchanged, and the original archive is retained under `wheelhouse/upstream/`. The Dockerfile also installs Blender's required `libxkbcommon0`.
+
+PyTorch/CUDA are supplied by the base image. Python dependencies install with networking disabled and `--no-index`, followed by `pip check`; a missing wheel fails the build. Base-image pulls and apt installation still require network access; apt uses the Aliyun Ubuntu mirror. Model weights and the host virtual environment are not copied into the image.
 
 ### For Training
 

@@ -1,7 +1,11 @@
 """Prepare pinned Linux/CPython wheels on the host; never install into the host venv."""
 import argparse
+import base64
+import csv
 import hashlib
 import html.parser
+import io
+import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -41,6 +45,48 @@ def verify(path, digest=None):
     with zipfile.ZipFile(path) as archive:
         if archive.testzip() is not None:
             raise RuntimeError(f'Corrupt wheel: {path}')
+
+def normalize_bpy_metadata(wheelhouse):
+    """Correct the upstream 4.3.0 cp311 wheel's erroneous cp39 WHEEL tag."""
+    path = wheelhouse / 'bpy-4.3.0-cp311-cp311-manylinux_2_28_x86_64.whl'
+    wheel_member = 'bpy-4.3.0.dist-info/WHEEL'
+    record_member = 'bpy-4.3.0.dist-info/RECORD'
+    wrong = 'Tag: cp39-cp39-manylinux_2_28_x86_64'
+    right = 'Tag: cp311-cp311-manylinux_2_28_x86_64'
+    with zipfile.ZipFile(path) as source:
+        metadata = source.read(wheel_member).decode()
+        if right in metadata:
+            return
+        if wrong not in metadata:
+            raise RuntimeError('Unexpected bpy WHEEL metadata; refusing to rewrite')
+        corrected = metadata.replace(wrong, right).encode()
+        rows = list(csv.reader(io.StringIO(source.read(record_member).decode())))
+        digest = base64.urlsafe_b64encode(hashlib.sha256(corrected).digest()).rstrip(b'=').decode()
+        for row in rows:
+            if row[0] == wheel_member:
+                row[1:] = ['sha256=' + digest, str(len(corrected))]
+            elif row[0] == record_member:
+                row[1:] = ['', '']
+        record = io.StringIO()
+        csv.writer(record, lineterminator='\n').writerows(rows)
+        backup = wheelhouse / 'upstream'
+        backup.mkdir(exist_ok=True)
+        shutil.copyfile(path, backup / path.name)
+        with tempfile.TemporaryDirectory(prefix='.bpy-metadata-', dir=wheelhouse) as temporary:
+            rebuilt = Path(temporary) / path.name
+            with zipfile.ZipFile(rebuilt, 'w') as target:
+                for info in source.infolist():
+                    if info.filename == wheel_member:
+                        target.writestr(info, corrected)
+                    elif info.filename == record_member:
+                        target.writestr(info, record.getvalue().encode())
+                    else:
+                        with source.open(info) as input_file, target.open(info, 'w') as output_file:
+                            shutil.copyfileobj(input_file, output_file, 1024 * 1024)
+            verify(rebuilt)
+            rebuilt.replace(path)
+    print('Corrected bpy 4.3.0 WHEEL tag and RECORD; original retained under upstream/', flush=True)
+
 
 
 def prepare(requirement, wheelhouse, index, tags):
@@ -106,6 +152,14 @@ def main():
         futures = [executor.submit(prepare, pin, args.wheelhouse, args.index, tags) for pin in pins]
         for future in futures:
             future.result()
+    normalize_bpy_metadata(args.wheelhouse)
+    checksums = []
+    for path in sorted(args.wheelhouse.iterdir()):
+        if path.suffix == '.whl':
+            with path.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            checksums.append(f'{digest}  {path.name}')
+    (args.wheelhouse / 'SHA256SUMS').write_text('\n'.join(checksums) + '\n')
     print('WHEELHOUSE COMPLETE', flush=True)
 
 

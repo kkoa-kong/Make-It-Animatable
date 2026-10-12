@@ -8,12 +8,16 @@ ENV PYTHONUNBUFFERED=1 \
     HY3DGEN_MODELS=/models/hunyuan \
     MIA_CHECKPOINT_DIR=/models/mia-v2 \
     PORT=8081 \
-    MIA_JOBS_DIR=/var/lib/mia-v2/jobs \
-    MIA_ANIMATIONS_DIR=/models/mixamo
+    MIA_JOBS_DIR=/var/lib/mia-v2/jobs
 
 WORKDIR /app
 
-RUN apt-get update \
+RUN printf '%s\n' \
+        'deb https://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse' \
+        'deb https://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse' \
+        'deb https://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse' \
+        > /etc/apt/sources.list \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
         libegl1 \
@@ -24,13 +28,20 @@ RUN apt-get update \
         libxext6 \
         libxi6 \
         libxrender1 \
+        libxkbcommon0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY . /app
+ENV MIA_ANIMATIONS_DIR=/models/mixamo
+
+COPY api-offline-requirements.txt /app/
 RUN --network=none --mount=type=bind,from=wheelhouse,target=/wheels \
-    chmod +x /app/util/FBX2glTF \
-    && pip install --no-index --find-links=/wheels -r api-offline-requirements.txt \
+    pip install --no-index --find-links=/wheels -r api-offline-requirements.txt \
     && pip check
+
+COPY . /app
+RUN chmod +x /app/util/FBX2glTF
+
+ENV MIA_UI=0
 
 EXPOSE 8081
 CMD ["python", "/app/api_server.py"]
