@@ -1,4 +1,5 @@
 import { MotionViewer } from './viewer.js';
+import { saveModel, listModels, removeModel } from './model-cache.js';
 
 const $ = (id) => document.getElementById(id);
 const PAGE_SIZE = 12;
@@ -15,6 +16,9 @@ let scrubbing = false;
 let searchTimer = null;
 let healthLoading = false;
 let demoLoading = false;
+let cachedModels = [];
+let modelListVersion = 0;
+
 
 function errorText(value) {
   if (typeof value === 'string') return value;
@@ -122,30 +126,55 @@ async function loadCategories() {
   $('categories').replaceChildren(...buttons);
   if (Number.isFinite(result.total)) $('library-count').textContent = result.total.toLocaleString('zh-CN');
 }
+function motionSymbol(category) {
+  const paths = {
+    dance: 'M12 9l-4 5-4-3m8-2 5-3 3 3M12 9l2 8-5 4m5-4 4 4',
+    combat: 'M12 9l-5 4-3-4m8 0 5 2 3-4M12 9l-2 8-5 3m5-3 7 3',
+    locomotion: 'M12 9l-4 4-4-2m8-2 4 4 4-2M12 9l-2 7-4 5m4-5 7 3',
+    acrobatics: 'M12 9l-6-2-3 3m9-1 6-2 3 3M12 9l-3 7-5 1m8-8 4 7 4 1',
+  };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const head = document.createElementNS(svg.namespaceURI, 'circle');
+  for (const [key, value] of Object.entries({ cx: '12', cy: '5', r: '2' })) head.setAttribute(key, value);
+  const body = document.createElementNS(svg.namespaceURI, 'path');
+  body.setAttribute('d', paths[category] || 'M12 9v6m0-4-7 2m7-2 7 2m-7 2-5 6m5-6 5 6');
+  svg.append(head, body);
+  return svg;
+}
+
 function renderCards(items) {
-  const cards = items.map((record, index) => {
+  const cards = items.map((record) => {
     const selected = state.selection?.motion_id === record.motion_id;
     const card = makeElement('article', `animation-card${selected ? ' is-selected' : ''}`);
     card.dataset.motionId = record.motion_id;
+    card.dataset.category = record.category_id || 'other';
     const button = makeElement('button', 'card-select');
     button.type = 'button';
     button.setAttribute('aria-pressed', String(selected));
     button.setAttribute('aria-label', `选择 ${motionName(record)}，动作 ID ${record.motion_id}`);
     const top = makeElement('div', 'card-top');
-    top.append(makeElement('span', 'card-category', record.category_label || '未分类'), makeElement('span', 'card-ordinal', String(state.offset + index + 1).padStart(2, '0')));
+    top.append(makeElement('span', 'card-category', record.category_label || '未分类'), makeElement('span', 'card-kind', 'FBX MOTION'));
     const title = makeElement('h3', 'card-title', motionName(record));
     const description = makeElement('p', 'card-description', record.description || record.prompt || '此素材没有描述。');
     description.title = description.textContent;
     const meta = makeElement('div', 'card-meta');
     meta.append(makeElement('span', '', `${record.frames ?? '未知'} 帧`), makeElement('span', 'card-check', selected ? '已选择' : '选择 ↗'));
-    button.append(top, title, description, meta);
+    const lead = makeElement('div', 'card-lead');
+    const symbol = makeElement('span', 'motion-symbol');
+    symbol.append(motionSymbol(record.category_id));
+    const body = makeElement('div', 'card-body');
+    body.append(title, description);
+    lead.append(symbol, body);
+    button.append(top, lead, meta);
     button.addEventListener('click', () => selectMotion(record));
-    const id = makeElement('div', 'card-id', `ID ${record.motion_id}`);
+    const id = makeElement('div', 'card-id', `ID · ${record.motion_id.slice(0, 8)}`);
     id.title = record.motion_id;
     const preview = makeElement('button', 'card-preview');
     preview.type = 'button';
     preview.setAttribute('aria-label', `预览 ${motionName(record)} 的源动作骨架，ID ${record.motion_id}`);
-    preview.append(makeElement('span', '', '源动作骨架预览'), makeElement('span', '', '↗'));
+    preview.append(makeElement('span', '', '播放骨架预览'), makeElement('span', '', '▷'));
     preview.disabled = !viewer;
     preview.addEventListener('click', () => previewMotion(record));
     card.append(button, id, preview);
@@ -240,10 +269,6 @@ async function loadView(url, { label, note, motion = false, mode = 'model' }) {
   }
 }
 function previewMotion(record) {
-  $('viewport').scrollIntoView({
-    block: 'center',
-    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-  });
   return loadView(`/animations/${encodeURIComponent(record.motion_id)}/file`, {
     label: `动作骨架预览 · ${motionName(record)}`,
     note: '这是源 FBX 的动作骨架，不是已绑定角色的生成结果。', motion: true, mode: 'skeleton',
@@ -256,13 +281,14 @@ function previewUploaded() {
 function previewDemo() {
   return loadView('/ui/demo', { label: '示例角色 · 未生成', note: '示例仅用于预览；点击「使用示例角色」才会作为输入。' });
 }
-function setInputFile(file) {
+async function setInputFile(file, { save = true, cacheId = null } = {}) {
   if (!file || !/\.glb$/i.test(file.name)) {
     $('file-message').textContent = '请选择一个 .glb 模型文件，其他格式不支持直接上传。';
     return;
   }
   const oldURL = state.fileURL;
   state.file = file;
+  state.cacheId = cacheId;
   state.fileURL = URL.createObjectURL(file);
   if (oldURL) URL.revokeObjectURL(oldURL);
   $('file-name').textContent = file.name;
@@ -271,7 +297,66 @@ function setInputFile(file) {
   $('model-file').value = '';
   updateRunState();
   previewUploaded();
+  renderCachedModels();
+  if (save) {
+    $('cache-message').textContent = '正在将 GLB 保存到浏览器…';
+    try {
+      const record = await saveModel(file);
+      if (state.file === file) state.cacheId = record.id;
+      await refreshCachedModels();
+    } catch (error) {
+      if (state.file === file) $('cache-message').textContent = `本机保存失败：${error.message}。当前模型仍可预览和生成。`;
+    }
+  }
 }
+function renderCachedModels() {
+  $('cached-count').textContent = String(cachedModels.length);
+  const cards = cachedModels.map(record => {
+    const card = makeElement('div', 'cached-model');
+    card.classList.toggle('is-selected', record.id === state.cacheId);
+    const load = makeElement('button', 'cached-model-load');
+    load.type = 'button';
+    load.setAttribute('aria-pressed', String(record.id === state.cacheId));
+    load.setAttribute('aria-label', `载入缓存模型 ${record.name}`);
+    load.append(makeElement('span', 'model-file-icon', 'GLB'));
+    const detail = makeElement('span', 'cached-model-detail');
+    detail.append(makeElement('strong', '', record.name), makeElement('small', '', `${formatBytes(record.size)} · ${new Date(record.savedAt).toLocaleDateString('zh-CN')}`));
+    load.append(detail);
+    load.addEventListener('click', () => setInputFile(new File([record.blob], record.name, { type: 'model/gltf-binary', lastModified: record.lastModified }), { save: false, cacheId: record.id }));
+    const remove = makeElement('button', 'cached-model-remove', '×');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `删除本机缓存 ${record.name}`);
+    remove.title = '仅删除本机缓存';
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      try {
+        await removeModel(record.id);
+        if (state.cacheId === record.id) state.cacheId = null;
+        await refreshCachedModels();
+      } catch (error) {
+        $('cache-message').textContent = `删除失败：${error.message}`;
+        remove.disabled = false;
+      }
+    });
+    card.append(load, remove);
+    return card;
+  });
+  $('cached-models').replaceChildren(...(cards.length ? cards : [makeElement('p', 'cache-empty', '上传 GLB 后会自动保存在这里。')]));
+}
+
+async function refreshCachedModels() {
+  const version = ++modelListVersion;
+  try {
+    const records = await listModels();
+    if (version !== modelListVersion) return;
+    cachedModels = records;
+    renderCachedModels();
+    $('cache-message').textContent = records.length ? '已保存实际 GLB 文件，点击模型即可切换。' : '';
+  } catch (error) {
+    if (version === modelListVersion) $('cache-message').textContent = `无法读取本机缓存：${error.message}`;
+  }
+}
+
 async function useDemo() {
   if (demoLoading) return;
   demoLoading = true;
@@ -403,7 +488,7 @@ async function loadArtifacts(job, version, autoPreview = true) {
   $('view-joints').disabled = !viewer || !byName.has('joints.glb');
   $('view-coarse').disabled = !viewer || !byName.has('joints_coarse.glb');
   const animationName = artifacts.animation?.filename || artifacts.animation?.prompt;
-  stageJob('succeeded', `生成已完成，${links.length} 个真实输出文件可下载。${animationName ? `任务动作：${animationName}。` : ''}${!byName.has('animatable_preview.glb') ? '此任务未包含可播放 GLB；可下载实际输出文件。' : '下方时间轴可播放生成角色；切换骨架或关节查看绑定。'}`);
+  stageJob('succeeded', `生成已完成，${links.length} 个真实输出文件可下载。${animationName ? `任务动作：${animationName}。` : ''}${!byName.has('animatable_preview.glb') ? '此任务未包含可播放 GLB；可下载实际输出文件。' : '视图下方时间轴可播放生成角色；切换骨架或关节查看绑定。'}`);
   $('retry-job').hidden = true;
   if (autoPreview && byName.has('animatable_preview.glb')) viewArtifact('animatable_preview.glb');
 }
@@ -548,6 +633,7 @@ window.addEventListener('pagehide', (event) => {
 updateRunState();
 refreshHealth();
 refreshLibrary();
+refreshCachedModels();
 reconnectLastJob();
 if (viewer) previewDemo();
 const healthTimer = setInterval(refreshHealth, 15000);

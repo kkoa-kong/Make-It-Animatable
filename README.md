@@ -139,7 +139,7 @@ These dataset-specific files use their official Hugging Face source; no equivale
 
 The library files are ignored by Git and excluded from the image; retain them on disk and mount the complete directory read-only in Docker.
 
-#### Web / H5 animation studio
+#### Web animation studio
 
 Enable the optional HTML/Three.js interface on the same worker and port:
 
@@ -153,7 +153,9 @@ Open `http://agent-models-api.singularity-ai.com:8081/` through your existing ac
 
 The development service is already running; access its URL directly. Stop `mia-v2-api.service` before using a foreground command so two workers do not compete for the same port and job directory.
 
-The responsive dark, flat studio supports GLB file/drop upload, eight keyword-derived motion groups, name/description search, pagination and unique-ID selection. It previews the original uploaded GLB and the selected pure-FBX source skeleton separately; only submitting the generation task produces a bound character. Actual upload progress and queued/running/failed/succeeded states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
+The desktop studio uses a single-screen three-column layout: motion categories/search and redesigned cards on the left, the main 3D viewport in the center, model upload/options/history on the right. Both sidebars scroll independently; the header stays compact. There is no mobile-specific layout or pane switching. GLB file/drop upload, eight keyword-derived motion groups, pagination and unique-ID selection remain available. The original uploaded GLB and selected pure-FBX source skeleton are previewed separately; only submitting the generation task produces a bound character. Actual upload progress and queued/running/failed/succeeded states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
+
+Uploaded GLB files are automatically stored as actual blobs in browser IndexedDB, not just filenames or remote URLs. The right-hand “My models” list remains after reload; selecting a saved model reloads that GLB as the current generation input without creating another history entry. Delete controls remove only the local cached copy. Storage is scoped to the browser and origin (including port); clearing site data or browser eviction removes it. If saving fails (for example, quota or disabled storage), an explicit error is shown while the current upload remains usable. Files are sent to the API only when generation is submitted.
 
 Successful tasks expose the animated GLB, animated skeleton/joint overlays, predicted joint GLBs, FBX and complete ZIP. Playback, pause, seek, speed, orbit/zoom and reset use the real Three.js scene and animation clips. Requires a modern WebGL2 browser; if 3D initialization fails, generation and downloads remain available with an explicit preview error.
 
