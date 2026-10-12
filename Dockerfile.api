@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+FROM scratch AS wheelhouse
+
+FROM pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    HF_HOME=/models/huggingface \
+    HY3DGEN_MODELS=/models/hunyuan \
+    MIA_CHECKPOINT_DIR=/models/mia-v2 \
+    PORT=8081 \
+    MIA_JOBS_DIR=/var/lib/mia-v2/jobs
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        libegl1 \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+        libsm6 \
+        libxext6 \
+        libxi6 \
+        libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . /app
+RUN --network=none --mount=type=bind,from=wheelhouse,target=/wheels \
+    chmod +x /app/util/FBX2glTF \
+    && pip install --no-index --find-links=/wheels -r api-offline-requirements.txt \
+    && pip check
+
+EXPOSE 8081
+CMD ["python", "/app/api_server.py"]

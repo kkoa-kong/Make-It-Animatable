@@ -1,0 +1,59 @@
+[project]
+name = "make-it-animatable"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "einops",
+    "timm",
+    "torch-cluster==1.6.3+pt28cu129",
+    "pymcubes",
+    "bpy==4.3.0",
+    "fake-bpy-module",
+    "gradio>=5.50.0",
+    "ipykernel",
+    "ipympl",
+    "matplotlib",
+    "numpy~=1.26.4",
+    "plyfile",
+    "potpourri3d",
+    "shapely",
+    "spaces",
+    "tensorboard~=2.11.2",
+    "tqdm",
+    "trimesh[easy]",
+    "pytorch3d==0.7.8+5043d15pt2.8.0cu129",
+    "xformers==0.0.32.post2",
+    "accelerate<1.10",
+    "diffusers",
+    "huggingface_hub",
+    "scikit-image",
+    "omegaconf",
+    "transformers==4.46.0",
+    "pymeshlab~=2023.12.post3",
+    "opencv-contrib-python",
+]
+
+[tool.uv]
+find-links = [
+    "https://data.pyg.org/whl/torch-2.8.0+cu129.html",
+    "https://miropsota.github.io/torch_packages_builder/pytorch3d/",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu129" }
+torchvision = { index = "pytorch-cu129" }
+
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+

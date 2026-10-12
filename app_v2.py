@@ -1649,7 +1649,7 @@ if __name__ == "__main__":
 
     demo.launch(
         server_name="0.0.0.0",
-        server_port=7860,
+        server_port=8081,
         allowed_paths=list(map(os.path.abspath, [".", ".."])),
         show_error=True,
         ssr_mode=False,

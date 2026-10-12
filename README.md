@@ -23,17 +23,15 @@ Houqiang Li,
   - Upgraded to the Hunyuan3D 2.1 ShapeVAE backbone with retrained MIA models—larger capacity and better predictions! (only mesh inputs are supported).
   - Updated the architectures for joint, skinning-weight, and pose prediction, as long as the training pipeline.
   - Refined the demo app workflow—better skinning-weight post-processing, Blender integration, and global-transform restoration!
-  - Try the [MIA v2 demo](https://huggingface.co/spaces/jasongzy/Make-It-Animatable-v2), or run it locally with `python app_v2.py`!
+  - Try the [MIA v2 demo](https://huggingface.co/spaces/jasongzy/Make-It-Animatable-v2), or run it locally with `uv run app_v2.py`!
 
 ## Installation
 
 ```bash
-git clone https://github.com/jasongzy/Make-It-Animatable --recursive --single-branch --branch v2
+git clone https://github.com/kkoa-kong/Make-It-Animatable --recursive --single-branch --branch feat/v2-async-api
 cd Make-It-Animatable
 
-conda create -n mia python=3.11
-conda activate mia
-pip install -r requirements.txt
+uv sync
 ```
 
 ## Data Preparation
@@ -47,6 +45,9 @@ hf download jasongzy/Mixamo \
 ```
 
 ### For Demo
+
+The demo also requires `bones.fbx` and `bones_vroid.fbx` from the gated Mixamo dataset. Request dataset access, run `hf auth login`, then download them using the Mixamo command above.
+
 
 Download the pretrained models:
 
@@ -70,6 +71,84 @@ Download some tools:
 wget https://github.com/facebookincubator/FBX2glTF/releases/download/v0.9.7/FBX2glTF-linux-x64 -O util/FBX2glTF
 chmod +x util/FBX2glTF
 ```
+
+### Asynchronous URL-only inference API
+
+This fork maintains the API work on `feat/v2-async-api`, based on upstream `v2`. The original repository remains the `upstream` remote; `origin` points to [kkoa-kong/Make-It-Animatable](https://github.com/kkoa-kong/Make-It-Animatable).
+
+The API listens on **8081**. Submit mesh URLs rather than uploading files: GLB goes directly into the V2 pipeline; character FBX is converted to GLB using `util/FBX2glTF` first. An optional `input_animation_url` downloads a separate Mixamo-compatible animation FBX. Existing OBJ, STL, PLY and self-contained glTF inputs remain supported. Files with external dependencies must have their assets embedded; the API downloads individual files, not asset folders.
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /health` | `200` when models are ready, otherwise `503` |
+| `GET /info` | Worker state, supported formats and parameters |
+| `POST /generate` | JSON URL request; immediately returns `202` with `job_id`, `status_url` and initially null `result_url` |
+| `GET /jobs/{job_id}` | `queued`, `running`, `succeeded` or `failed`; failures include `error` and `error_code` |
+| `GET /jobs/{job_id}/result` | Downloads the successful ZIP; `409` before success, `404` for unknown jobs, `410` if the result was removed |
+
+One GPU job runs at a time; additional submissions queue without holding the HTTP connection open. Invalid request parameters return `422`; unavailable workers return `503`. Download and inference errors occur asynchronously and are reported in the job state.
+
+```bash
+curl -sS http://127.0.0.1:8081/generate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "input_url": "https://huggingface.co/jasongzy/Make-It-Animatable/resolve/main/data/examples/ninja.glb",
+    "input_animation_url": "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/fbx/Samba%20Dancing.fbx"
+  }'
+
+# Use the job_id returned above:
+curl -sS http://127.0.0.1:8081/jobs/JOB_ID
+curl --fail http://127.0.0.1:8081/jobs/JOB_ID/result -o mia-v2-result.zip
+```
+
+For extensionless mesh URLs, supply `input_format`, for example `"glb"` or `"fbx"`. Animation URLs must identify an `.fbx` file. The default download limit is 100 MiB per input, configurable with `MIA_MAX_INPUT_BYTES`; `MIA_DOWNLOAD_TIMEOUT` configures the socket timeout in seconds (default 30).
+
+Job metadata and requests persist in SQLite under `MIA_JOBS_DIR`, defaulting to `.cache/api-jobs`. Successful ZIPs include `animatable.fbx`, available previews/intermediate outputs and `manifest.json`. Results remain downloadable repeatedly and survive service restarts. Queued jobs resume on startup; interrupted running jobs become failed rather than silently being retried. There is no automatic result expiration: retain this directory during deployment changes and manage its disk usage explicitly.
+
+#### Temporary host service
+
+Use the existing Python 3.11 `.venv`, V2 checkpoints, Hunyuan VAE cache and `data/Mixamo/bones.fbx`. Start directly for foreground development:
+
+```bash
+CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py
+```
+
+The supplied `mia-v2-api.service` is configured for this host's `/data/Make-It-Animatable` path and **physical GPU 4**, exposed as logical CUDA device 0. It runs without Docker, restarts on process failure and starts at boot:
+
+```bash
+sudo systemctl link /data/Make-It-Animatable/mia-v2-api.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now mia-v2-api.service
+journalctl -u mia-v2-api.service -f
+```
+
+Optional environment overrides go in `/etc/default/mia-v2-api`; restart the service after changing them. Do not run the Gradio app at the same time: it also uses port 8081. From a development machine, replace `127.0.0.1` in the API examples with the server address, or use an SSH tunnel.
+
+This host has an existing TUN fake-IP gateway. The unit mounts `mia-v2-api.resolv.conf` only inside the service, using its existing DNS server `10.251.1.1` without changing host DNS. `MIA_TRUSTED_EGRESS_HOSTS` explicitly permits the example hosts (`huggingface.co`, `us.aws.cdn.hf.co`, `raw.githubusercontent.com`) to resolve through the gateway's `198.18.0.0/15` range. Add only trusted asset/CDN hostnames, including redirect destinations, if your storage uses this gateway. The exception never permits literal fake-IP URLs or other internal IP ranges; arbitrary hosts still require public IP addresses, and HTTPS certificates remain verified. On hosts without this gateway, remove the unit's DNS bind mount and trusted-egress environment setting; foreground commands do not inherit the unit's DNS configuration.
+
+The API has no authentication. Restrict network access to your development clients or use an SSH tunnel; do not expose it unrestricted to the public internet.
+
+#### Container deployment and cutover
+
+The API image excludes model weights. Mount the three MIA v2 checkpoints at `/models/mia-v2` and the Hunyuan3D VAE files (`hunyuan3d-vae-v2-1/config.yaml` and `model.fp16.ckpt`) under `/models/hunyuan/tencent/Hunyuan3D-2.1/`:
+
+```bash
+./prepare_api_wheels.sh /data/mia-build-wheels
+docker buildx build --load --build-context wheelhouse=/data/mia-build-wheels \
+  -f Dockerfile.api -t mia-v2-api:dev .
+
+# Stop the temporary worker before handing its GPU and port to Docker:
+sudo systemctl disable --now mia-v2-api.service
+docker run --rm --gpus '"device=4"' -p 8081:8081 \
+  -v "$PWD/output/best/v2:/models/mia-v2:ro" \
+  -v "$HOME/.cache/hy3dgen:/models/hunyuan:ro" \
+  -v "$PWD/.cache/api-jobs:/var/lib/mia-v2/jobs" \
+  mia-v2-api:dev
+```
+
+The Docker example assumes ordinary public DNS and outbound connectivity. If the container also uses a fake-IP gateway, configure its DNS and trusted-egress hostnames explicitly rather than disabling IP checks.
+
+The host prepares wheels using the pinned, locally validated Python 3.11 versions in `api-offline-requirements.txt`; this requires the existing `.venv` interpreter and `uv`. Ordinary packages default to Aliyun PyPI; override with `MIA_PIP_INDEX_URL` when preparing wheels. Specialized CUDA wheel sources remain available. PyTorch/CUDA are supplied by the base image. The image installs Python dependencies with networking disabled and `--no-index`, then runs `pip check`; a missing wheel fails the build. Base-image pulls and apt installation still require network access. Model weights and the host virtual environment are not copied into the image.
 
 ### For Training
 
@@ -109,8 +188,10 @@ So if you want to get rid of the Blender dependency during training, you can ite
 ## Demo for Inference
 
 ```bash
-python app.py
+uv run app_v2.py
 ```
+
+The app listens on port `8081` on all interfaces.
 
 An online demo is also available at [Hugging Face Spaces](https://huggingface.co/spaces/jasongzy/Make-It-Animatable).
 

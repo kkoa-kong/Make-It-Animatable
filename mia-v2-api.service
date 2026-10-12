@@ -1,0 +1,23 @@
+[Unit]
+Description=MIA V2 asynchronous development API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/data/Make-It-Animatable
+Environment=PYTHONUNBUFFERED=1
+Environment=CUDA_VISIBLE_DEVICES=4
+Environment=GPU_ID=0
+Environment=PORT=8081
+Environment=MIA_JOBS_DIR=/data/Make-It-Animatable/.cache/api-jobs
+EnvironmentFile=-/etc/default/mia-v2-api
+Environment=MIA_TRUSTED_EGRESS_HOSTS=huggingface.co,us.aws.cdn.hf.co,raw.githubusercontent.com
+BindReadOnlyPaths=/data/Make-It-Animatable/mia-v2-api.resolv.conf:/etc/resolv.conf
+ExecStart=/data/Make-It-Animatable/.venv/bin/python /data/Make-It-Animatable/api_server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target
