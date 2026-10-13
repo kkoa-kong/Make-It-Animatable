@@ -113,7 +113,7 @@ Job metadata and requests persist in SQLite under `MIA_JOBS_DIR`, defaulting to 
 
 #### Local Mixamo motion library
 
-`data/mixamo/` contains only `animation_motion/`, `animation_motion_prompts.json`, `animation_motion_frames.json`, and `animation_bones.json` from `Linzhan/Mixamo-Animations-Characters`, plus the deterministic derived `index.json` and `validation_report.json`. It is separate from the existing `data/Mixamo/` skeleton templates. Preserve the original descriptions; do not classify or rewrite them with an LLM.
+`data/mixamo/` contains the original `animation_motion/`, `animation_motion_prompts.json`, `animation_motion_frames.json`, and `animation_bones.json` from `Linzhan/Mixamo-Animations-Characters`, plus the deterministic derived `index.json` and `validation_report.json`. It is separate from the existing `data/Mixamo/` skeleton templates. English source descriptions remain untouched; Chinese display translations are stored separately in `web/motion-index.zh-CN.json`.
 
 Prepare the resource library with pinned upstream inventory, resumable bounded downloads, file-size checks, LFS SHA-256/Git blob SHA-1 verification, duplicate/missing validation and atomic index publication:
 
@@ -133,11 +133,21 @@ sudo systemd-run --unit=mia-mixamo-prepare --wait --pipe --collect \
   --revision 7f134bc734557b1d9516cb476d25ea1f577e45c1 --workers 8
 ```
 
-These dataset-specific files use their official Hugging Face source; no equivalent Aliyun mirror is configured. No character meshes, Y Bot, renders, videos or textures are downloaded. The validated library has **2,317 FBX files and three untouched JSONs**, totaling **1,371,030,958 bytes**, with no missing files, duplicate IDs or duplicate file contents. There are 362 duplicate display-name groups, so generation accepts only the unique `animation_id`, never an animation name. Search can use names and original English descriptions; it is deterministic text matching, not translated or vector semantic search.
+The original FBX preparation uses the official Hugging Face source; no equivalent Aliyun mirror is configured. It does not download character meshes, Y Bot, videos or textures. The validated source library has **2,317 FBX files and three untouched JSONs**, totaling **1,371,030,958 bytes**, with no missing files, duplicate IDs or duplicate file contents. There are 362 duplicate display-name groups, so generation accepts only the unique `animation_id`, never an animation name. Search includes original English metadata and the separately translated Chinese display fields; it is deterministic text matching, not vector semantic search.
 
 `MIA_ANIMATIONS_DIR` selects the resource root, defaulting to `data/mixamo`. Query the library, select a returned `motion_id`, then submit it as `animation_id` alongside either model source. It is mutually exclusive with uploaded/URL animations. Unknown IDs return `404`; a missing/invalid catalog returns `503` for library-dependent calls without disabling external animation inputs. The generated manifest records the selected original metadata and dataset revision. Source metadata contains frame counts and bone names, not FPS or a full bone hierarchy.
 
 The library files are ignored by Git and excluded from the image; retain them on disk and mount the complete directory read-only in Docker.
+
+Prepare the fast card previews separately:
+
+```bash
+.venv/bin/python prepare_mixamo_previews.py --destination data/mixamo --workers 8
+```
+
+The pinned HF dataset contains **no GIF**; `animation_motion_render/` provides four MP4 views per motion. This command downloads only the exact filename-stem-matched `v000.mp4`, stored as `previews/<motion_id>.mp4`. It prefers `https://hf-mirror.com` only after the pinned render inventory matches official paths, sizes and hashes, and falls back to official HF if that verification fails. Existing downloads are integrity-checked and interrupted transfers resume. This host has **2,317 verified previews**, totaling **105,453,156 bytes**, with zero missing mappings; details are in `preview_validation_report.json`. Mount `previews/` together with the original motion library. Preview requests are local: the browser never contacts HF or parses FBX just to show a card.
+
+`web/motion-index.zh-CN.json` ships with the code and uses the original Motion IDs and pinned dataset/revision. The API loads it at startup, exposes `prompt_zh` / `description_zh`, and retains original `prompt` / `description` and manifest fields. A missing display file falls back to English; invalid provenance or IDs fail catalog loading explicitly. Rebuild local font subsets with `.venv/bin/python prepare_ui_fonts.py` after editing the display index. Backend/index changes require a worker restart during your deployment window; do not start a second GPU worker. Static UI changes require a browser reload. These changes do not authorize an automatic production restart.
 
 #### Web animation studio
 
@@ -153,7 +163,9 @@ Open `http://agent-models-api.singularity-ai.com:8081/` through your existing ac
 
 The development service is already running; access its URL directly. Stop `mia-v2-api.service` before using a foreground command so two workers do not compete for the same port and job directory.
 
-The desktop studio uses a single-screen three-column layout: motion categories/search and redesigned cards on the left, the main 3D viewport in the center, model upload/options/history on the right. Both sidebars scroll independently; the header stays compact. There is no mobile-specific layout or pane switching. GLB file/drop upload, eight keyword-derived motion groups, pagination and unique-ID selection remain available. The original uploaded GLB and selected pure-FBX source skeleton are previewed separately; only submitting the generation task produces a bound character. Actual upload progress and queued/running/failed/succeeded states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
+The desktop studio uses a single-screen three-column layout: motion categories/search and video cards on the left, the main 3D viewport in the center, model upload/options/history on the right. Both sidebars scroll independently; the header stays compact. There is no mobile-specific layout or pane switching. Choose a GLB model, adjust parameters, then click an animation card to submit immediately. Without a model, clicking only records the motion; selecting a model later does not submit automatically. Double-clicks and clicks during upload/queued/running tasks do not append jobs. The separate generation button is for retrying or applying changed parameters. Actual upload progress and task states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
+
+Cards load video metadata only when visible. Hover or keyboard focus plays the source MP4; leaving pauses it. Reduced-motion users get an explicit play/pause button instead of automatic playback. The preview buttons never submit a job or replace the central model view. Source videos demonstrate the upstream character, not your generated character; the detailed FBX skeleton preview remains available. Missing/broken videos are explicit and do not prevent generation.
 
 Uploaded GLB files are automatically stored as actual blobs in browser IndexedDB, not just filenames or remote URLs. The right-hand “My models” list remains after reload; selecting a saved model reloads that GLB as the current generation input without creating another history entry. Delete controls remove only the local cached copy. Storage is scoped to the browser and origin (including port); clearing site data or browser eviction removes it. If saving fails (for example, quota or disabled storage), an explicit error is shown while the current upload remains usable. Files are sent to the API only when generation is submitted.
 

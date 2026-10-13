@@ -21,8 +21,8 @@ UI 模式启用后，直接在浏览器打开 `http://agent-models-api.singulari
 界面使用本地 HTML/CSS/Three.js 和本地中英文字体，不依赖 Gradio、外部 CDN 或 Node 构建。桌面采用单屏三栏：左侧动画分类与动作卡片，中间 3D 模型，右侧上传、参数和「我的模型」；两侧独立滚动，导航保持紧凑。不提供移动端布局或面板切换。现代浏览器需支持 WebGL2。流程：
 
 1. 上传或拖放 GLB；可先本地预览。明确选择「使用示例角色」才会把实际示例文件作为输入。
-2. 按分类或原始英文名称/描述查找动作，选择具体的唯一 ID；源 FBX 可独立预览为动画骨架。
-3. 提交绑定任务，查看真实上传进度和异步状态。推理阶段不显示虚构百分比。
+2. 按分类或中文 / 英文名称、描述查找动作；卡片悬停或点击「播放短视频」可快速预览源动作，不生成任务。详细 FBX 骨架预览仍保留。
+3. 先选好模型和绑定参数，再点击动画卡片直接提交，无需再点生成按钮。没有模型时只记录动作；之后选择模型不会自动生成。上传或任务进行中重复点击不追加任务。「重新生成所选动作」用于重试或应用修改后的参数。查看真实上传进度和异步状态，推理阶段不显示虚构百分比。
 4. 播放生成的 GLB，暂停、拖动时间轴、调整倍率、旋转缩放视角，切换骨架或关节点；还可查看预测关节 GLB。
 5. 下载完整 ZIP 或实际单个产物。页面刷新会重新查询上次任务，不会自动再次生成。
 6. 上传的实际 GLB 文件自动保存至当前浏览器的 IndexedDB。刷新后在右侧「我的模型」点击即可载入，并作为当前生成输入；切换缓存模型不重复保存。删除只移除本机缓存，不删除服务端任务。
@@ -75,7 +75,7 @@ curl -sS "$BASE/info"
 7f134bc734557b1d9516cb476d25ea1f577e45c1
 ```
 
-包含 2,317 个纯骨骼 FBX 动画。原始名称、描述、Motion ID 和帧数直接复用数据集 JSON，没有重新生成描述、标签或分类。
+包含 2,317 个纯骨骼 FBX 动画。原始名称、描述、Motion ID 和帧数直接复用数据集 JSON。中文名称和描述保存在独立展示索引 `web/motion-index.zh-CN.json`，不覆盖原始元数据；分类仍按原始英文关键词确定。固定版本的完整文件清单没有 GIF，但有每动作四个视角的 MP4；卡片使用一个现成视角，不需要实时解析 FBX。
 
 ### 查询动作列表
 
@@ -85,7 +85,7 @@ GET /animations?q=walking&limit=20&offset=0
 
 | 参数 | 说明 |
 | --- | --- |
-| `q` | 按文件名、动作名称和原始描述检索；所有归一化关键词都须匹配 |
+| `q` | 按文件名、原始英文名称/描述和独立中文展示名称/描述检索；所有归一化关键词都须匹配 |
 | `name` | 原始动作名称的归一化精确匹配；可能返回多个同名动作 |
 | `category` | 可选的关键词分组 ID；省略、空值或 `all` 为全部，未知值返回 `422` |
 | `limit` | 每页条数，默认 20，范围 1–100 |
@@ -98,6 +98,10 @@ curl -sS -G "$BASE/animations" \
 
 curl -sS -G "$BASE/animations" \
   --data-urlencode 'name=Agreeing'
+
+curl -sS -G "$BASE/animations" \
+  --data-urlencode 'q=公文包' \
+  --data-urlencode 'limit=12'
 ```
 
 响应结构为 `{total, limit, offset, items}`。每个动作记录包含：
@@ -116,7 +120,7 @@ curl -sS -G "$BASE/animations" \
 
 将返回记录的 `motion_id` 填入生成请求的 `animation_id`。原始动作名称存在 362 个重名分组，但 Motion ID 没有重复。
 
-检索是确定性的英文元数据检索：大小写、Unicode 和分隔符归一化，名称优先于描述匹配，排序稳定。不提供跨语言向量语义搜索，不自动把中文动作名称翻译为英文。
+检索是确定性的中英文文本匹配：大小写、Unicode 和分隔符归一化，名称优先于描述，排序稳定。中文来自展示索引，不通过在线翻译或向量语义检索。`name` 仍精确匹配原始英文名称；生成仍只接受 Motion ID。
 
 ### 分类接口
 
@@ -134,6 +138,24 @@ curl -sS -G "$BASE/animations" \
 ```
 
 动作列表和详情额外提供 `category_id`、`category_label`。分组依据原始英文关键词，名称和描述不改写；这些不是 Mixamo 官方分类，也不是 LLM 语义分类。生成仍只接受唯一 `animation_id`，不接受分类或名字作为绑定选择。
+
+列表和详情还提供 `prompt_zh`、`description_zh`（展示译文存在时），以及 `preview_status`（`ready` / `missing`）和 `preview_url`（可用时为同源 `/animations/{motion_id}/preview`，否则 `null`）。中文索引绑定原始 dataset/revision 和 Motion ID，部署启动时加载；缺少索引回退英文，索引格式、来源或 ID 错误会明确使动作库不可用。原始英文、FBX 路径与生成 manifest 不受展示译文影响。
+
+### 快速视频预览与部署
+
+```bash
+# 已准备 FBX 和原始 index.json 后，额外准备卡片短视频：
+.venv/bin/python prepare_mixamo_previews.py --destination data/mixamo --workers 8
+
+# 验证卡片视频；支持浏览器 Range 请求：
+curl --fail -sS "$BASE/animations/$ANIMATION_ID/preview" -o motion-preview.mp4
+```
+
+预览接口返回 `video/mp4`；未知 ID、未安装视频或越界资源返回 `404`。短视频以 `<motion_id>.mp4` 保存于 `MIA_ANIMATIONS_DIR/previews/`，部署时连同 FBX 目录挂载。下载脚本优先验证 `hf-mirror.com` 与官方固定版本清单的路径、大小和哈希完全一致，再校验本地文件；镜像不可用或不匹配时回退官方 HF。准备报告为 `preview_validation_report.json`。本机已下载并校验 2,317 个视频，总计 105,453,156 字节。
+
+卡片仅为可见视频读取元数据，悬停/键盘聚焦播放，离开暂停；减少动态效果偏好下仅手动播放。快速预览和骨架按钮不提交任务，快速预览不切换中央模型。视频展示的是数据集源角色，不是用户模型生成结果；缺失时明确提示并保留骨架入口。
+
+中文索引随代码发布；修改译文后运行 `.venv/bin/python prepare_ui_fonts.py` 更新字体覆盖。部署新后端或索引后需在部署窗口重启现有 Worker，再刷新浏览器；不要另外启动同端口/任务目录的 GPU Worker。仅静态 HTML/CSS/JS 更新可刷新页面生效。
 
 ### 指定动作详情与文件
 

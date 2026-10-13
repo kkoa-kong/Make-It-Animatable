@@ -18,6 +18,16 @@ let healthLoading = false;
 let demoLoading = false;
 let cachedModels = [];
 let modelListVersion = 0;
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const previewObserver = new IntersectionObserver((entries) => {
+  for (const { target, isIntersecting } of entries) {
+    if (isIntersecting && !target.src && target.dataset.src) {
+      target.src = target.dataset.src;
+      target.load();
+    }
+    if (!isIntersecting) target.pause();
+  }
+}, { root: $('library') });
 
 
 function errorText(value) {
@@ -59,12 +69,12 @@ function updateRunState() {
   const busy = state.submitting || state.jobBusy;
   const ready = state.service?.status === 'ready';
   $('generate').disabled = busy || !ready || !state.file || !state.selection;
-  $('generate').firstElementChild.textContent = state.submitting ? '正在上传模型' : state.jobBusy ? '任务正在进行' : '生成角色动画';
-  $('run-hint').textContent = busy ? '当前任务结束后可再次生成；离开页面不会取消后台任务。'
+  $('generate').firstElementChild.textContent = state.submitting ? '正在上传模型' : state.jobBusy ? '任务正在进行' : '重新生成所选动作';
+  $('run-hint').textContent = busy ? '当前任务结束后再点动作；离开页面不会取消后台任务。'
     : !ready ? '等待生成服务就绪。可先浏览动作、上传和预览模型。'
-    : !state.file ? '上传 GLB，或明确选择「使用示例角色」。'
-    : !state.selection ? '从下方动作库选择一个具体动作。'
-    : `准备就绪：${state.file.name} + ${motionName(state.selection)}`;
+    : !state.file ? '先上传 GLB 或使用示例角色，再点击动画卡片直接生成。'
+    : !state.selection ? '模型已选好，点击左侧动画卡片直接生成。'
+    : `点击动画卡片直接生成；修改参数后可重新生成。当前：${state.file.name} + ${motionName(state.selection)}`;
   $('preview-upload').disabled = !state.file || !viewer;
   $('preview-motion').disabled = !state.selection || !viewer;
 }
@@ -92,20 +102,28 @@ async function refreshHealth() {
   }
 }
 function motionName(record) {
-  return record.prompt || (record.filename ? record.filename.replace(/\.fbx$/i, '') : record.motion_id);
+  return record.prompt_zh || record.prompt || (record.filename ? record.filename.replace(/\.fbx$/i, '') : record.motion_id);
 }
 function selectMotion(record) {
   state.selection = record;
   $('selected-name').textContent = motionName(record);
   $('selected-detail').textContent = `${record.category_label || '未分类'} · ${record.frames ?? '未知'} 帧 · ID ${record.motion_id}`;
-  $('selected-motion').title = record.description || record.prompt || '';
+  $('selected-motion').title = record.description_zh || record.description || record.prompt || '';
   for (const card of $('animation-grid').querySelectorAll('.animation-card')) {
     const selected = card.dataset.motionId === record.motion_id;
     card.classList.toggle('is-selected', selected);
     card.querySelector('.card-select').setAttribute('aria-pressed', String(selected));
-    card.querySelector('.card-check').textContent = selected ? '已选择' : '选择 ↗';
+    card.querySelector('.card-check').textContent = selected ? '当前动作 · 点击生成 ↗' : '点击生成 ↗';
   }
   updateRunState();
+}
+function activateMotion(record) {
+  if (state.submitting || state.jobBusy) {
+    $('run-hint').textContent = '当前任务仍在进行，结束后再点击动作；未追加任务。';
+    return;
+  }
+  selectMotion(record);
+  if (state.file && state.service?.status === 'ready') generate();
 }
 async function loadCategories() {
   const result = await requestJSON('/animations/categories');
@@ -145,6 +163,12 @@ function motionSymbol(category) {
 }
 
 function renderCards(items) {
+  previewObserver.disconnect();
+  for (const video of $('animation-grid').querySelectorAll('video')) {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
   const cards = items.map((record) => {
     const selected = state.selection?.motion_id === record.motion_id;
     const card = makeElement('article', `animation-card${selected ? ' is-selected' : ''}`);
@@ -153,34 +177,75 @@ function renderCards(items) {
     const button = makeElement('button', 'card-select');
     button.type = 'button';
     button.setAttribute('aria-pressed', String(selected));
-    button.setAttribute('aria-label', `选择 ${motionName(record)}，动作 ID ${record.motion_id}`);
+    button.setAttribute('aria-label', `点击生成 ${motionName(record)}，动作 ID ${record.motion_id}`);
     const top = makeElement('div', 'card-top');
     top.append(makeElement('span', 'card-category', record.category_label || '未分类'), makeElement('span', 'card-kind', 'FBX MOTION'));
     const title = makeElement('h3', 'card-title', motionName(record));
-    const description = makeElement('p', 'card-description', record.description || record.prompt || '此素材没有描述。');
+    const description = makeElement('p', 'card-description', record.description_zh || record.description || record.prompt || '此素材没有描述。');
     description.title = description.textContent;
     const meta = makeElement('div', 'card-meta');
-    meta.append(makeElement('span', '', `${record.frames ?? '未知'} 帧`), makeElement('span', 'card-check', selected ? '已选择' : '选择 ↗'));
+    meta.append(makeElement('span', '', `${record.frames ?? '未知'} 帧`), makeElement('span', 'card-check', selected ? '当前动作 · 点击生成 ↗' : '点击生成 ↗'));
     const lead = makeElement('div', 'card-lead');
-    const symbol = makeElement('span', 'motion-symbol');
-    symbol.append(motionSymbol(record.category_id));
     const body = makeElement('div', 'card-body');
     body.append(title, description);
-    lead.append(symbol, body);
-    button.append(top, lead, meta);
-    button.addEventListener('click', () => selectMotion(record));
+    lead.append(body);
+    const media = makeElement('div', 'card-media');
+    const mediaStatus = makeElement('span', 'card-media-status', record.preview_url ? '正在读取预览…' : '未安装短视频 · 可查看骨架');
+    let video = null;
+    const quick = makeElement('button', 'card-preview', '播放短视频 ▷');
+    quick.type = 'button';
+    quick.disabled = !record.preview_url;
+    quick.setAttribute('aria-label', `仅预览 ${motionName(record)}，不生成任务`);
+    quick.setAttribute('aria-pressed', 'false');
+    if (record.preview_url) {
+      video = makeElement('video', 'card-video');
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.dataset.src = localURL(record.preview_url);
+      video.setAttribute('aria-hidden', 'true');
+      const play = () => {
+        if (!video.src) { video.src = video.dataset.src; video.load(); }
+        video.play().catch(() => { mediaStatus.hidden = false; mediaStatus.textContent = '点击「播放短视频」预览'; });
+      };
+      video.addEventListener('loadeddata', () => { mediaStatus.hidden = true; });
+      video.addEventListener('error', () => {
+        mediaStatus.hidden = false;
+        mediaStatus.textContent = '短视频不可用 · 可查看骨架';
+        quick.disabled = true;
+      });
+      video.addEventListener('play', () => { quick.textContent = '暂停短视频 Ⅱ'; quick.setAttribute('aria-pressed', 'true'); });
+      video.addEventListener('pause', () => { quick.textContent = '播放短视频 ▷'; quick.setAttribute('aria-pressed', 'false'); });
+      quick.addEventListener('click', () => { if (video.paused) play(); else video.pause(); });
+      button.addEventListener('pointerenter', () => { if (!reducedMotion.matches) play(); });
+      button.addEventListener('pointerleave', () => video.pause());
+      button.addEventListener('focus', () => { if (!reducedMotion.matches) play(); });
+      button.addEventListener('blur', () => video.pause());
+      media.append(video);
+    } else {
+      media.append(motionSymbol(record.category_id));
+    }
+    media.append(mediaStatus);
+    const sourceName = makeElement('p', 'card-source-name', record.prompt || record.filename);
+    sourceName.title = `${record.filename}\n${record.description || ''}`;
+    body.append(sourceName);
+    button.append(media, top, lead, meta);
+    button.addEventListener('click', () => activateMotion(record));
     const id = makeElement('div', 'card-id', `ID · ${record.motion_id.slice(0, 8)}`);
     id.title = record.motion_id;
-    const preview = makeElement('button', 'card-preview');
+    const preview = makeElement('button', 'card-preview', '详细骨架 ↗');
     preview.type = 'button';
     preview.setAttribute('aria-label', `预览 ${motionName(record)} 的源动作骨架，ID ${record.motion_id}`);
-    preview.append(makeElement('span', '', '播放骨架预览'), makeElement('span', '', '▷'));
     preview.disabled = !viewer;
     preview.addEventListener('click', () => previewMotion(record));
-    card.append(button, id, preview);
+    const actions = makeElement('div', 'card-preview-actions');
+    actions.append(quick, preview);
+    card.append(button, id, actions);
     return card;
   });
   $('animation-grid').replaceChildren(...(cards.length ? cards : [makeElement('div', 'grid-empty', '没有匹配的动作。试试其他关键词或分类。')]));
+  for (const video of $('animation-grid').querySelectorAll('video')) previewObserver.observe(video);
 }
 async function loadAnimations() {
   const version = ++state.catalogVersion;
@@ -200,7 +265,7 @@ async function loadAnimations() {
     if (!Array.isArray(result.items) || !Number.isFinite(result.total)) throw new Error('动作库返回了无效数据。');
     state.total = result.total;
     renderCards(result.items);
-    $('library-status').textContent = state.total ? `找到 ${state.total.toLocaleString('zh-CN')} 个动作 · 点击卡片选择` : '没有匹配结果';
+    $('library-status').textContent = state.total ? `找到 ${state.total.toLocaleString('zh-CN')} 个动作 · 悬停预览，点击生成` : '没有匹配结果';
     $('page-summary').textContent = state.total ? `${state.offset + 1}–${Math.min(state.offset + result.items.length, state.total)} / ${state.total.toLocaleString('zh-CN')}` : '0 个结果';
     $('previous-page').disabled = state.offset === 0;
     $('next-page').disabled = state.offset + PAGE_SIZE >= state.total;

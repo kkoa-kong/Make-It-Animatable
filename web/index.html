@@ -21,11 +21,11 @@
       <section class="library library-panel" id="library" aria-labelledby="library-title">
           <div class="panel-heading"><h2 id="library-title">动画库</h2><span class="library-count"><strong id="library-count">—</strong> 个动作</span></div>
           <div class="categories" id="categories" role="group" aria-label="按关键词分类筛选"><button class="category-button" type="button" data-category="" aria-pressed="true">全部</button></div>
-          <label class="search-box"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="animation-search" type="search" placeholder="搜索英文名称或描述" aria-label="搜索动作名称或描述" autocomplete="off"></label>
+          <label class="search-box"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="animation-search" type="search" placeholder="搜索中文 / 英文名称或描述" aria-label="搜索中英文动作名称或描述" autocomplete="off"></label>
           <div class="library-status"><p id="library-status" role="status" aria-live="polite">正在读取动作库…</p><button class="text-button" id="retry-library" type="button" hidden>重新加载</button></div>
           <div class="animation-grid" id="animation-grid" aria-busy="true"></div>
           <div class="pagination"><span id="page-summary">—</span><div><button class="secondary-button" id="previous-page" type="button" disabled aria-label="上一页动作">←</button><button class="secondary-button" id="next-page" type="button" disabled aria-label="下一页动作">→</button></div></div>
-          <p class="metadata-note">分类来自英文关键词，帧数不代表时长。</p>
+          <p class="metadata-note">悬停或点「播放短视频」只预览；选好模型后，点击卡片直接生成。视频为源动作演示，不是你的角色结果。中文为展示译文，分类来自英文关键词。</p>
         </section>
       <section class="preview-panel" id="viewer-panel" aria-label="3D 模型预览">
         <div class="preview-heading"><h1>3D 视图</h1><span class="preview-badge" id="preview-label">示例角色 · 未生成</span></div>
@@ -45,10 +45,10 @@
         <section class="panel-section" aria-labelledby="parameter-title">
           <div class="panel-heading"><h2 id="parameter-title">绑定参数</h2></div>
           <div class="run-options"><label><input id="inplace" type="checkbox" checked> 原地运动</label><label><input id="no-fingers" type="checkbox"> 不预测手指</label></div>
-          <div class="selected-motion" id="selected-motion"><div><strong id="selected-name">尚未选择动画</strong><span id="selected-detail">从动画库选择具体动作。</span></div></div>
+          <div class="selected-motion" id="selected-motion"><div><strong id="selected-name">尚未选择动画</strong><span id="selected-detail">选好模型后，点击左侧动作直接生成。</span></div></div>
           <button class="text-button" id="preview-motion" type="button" disabled>预览所选动作骨架 ↗</button>
-          <button class="primary-button" id="generate" type="button" disabled><span>生成角色动画</span><span aria-hidden="true">↗</span></button>
-          <p class="run-hint" id="run-hint">上传角色并选择动作后开始。</p>
+          <button class="primary-button" id="generate" type="button" disabled><span>重新生成所选动作</span><span aria-hidden="true">↗</span></button>
+          <p class="run-hint" id="run-hint">先选角色模型，再点击动画卡片。</p>
         </section>
         <section class="panel-section" aria-labelledby="cached-title">
           <div class="panel-heading"><h2 id="cached-title">我的模型</h2><span class="format-label" id="cached-count">0</span></div>
@@ -63,6 +63,11 @@
           <p id="job-message" role="status" aria-live="polite"></p><p class="job-id" id="job-id"></p>
           <div class="job-actions"><button class="secondary-button" id="retry-job" type="button" hidden>重新连接任务</button><button class="text-button" id="dismiss-job" type="button" hidden>清除任务记录</button><div class="artifact-actions" id="artifact-actions" hidden><button class="secondary-button" id="view-result" type="button" disabled>生成动画</button><button class="secondary-button" id="view-joints" type="button" disabled>预测关节</button><button class="secondary-button" id="view-coarse" type="button" disabled>粗预测关节</button><a class="download-button" id="download-result" download>下载结果 ZIP ↓</a></div></div>
           <details id="artifact-details" hidden><summary>所有输出文件</summary><ul id="artifact-list"></ul></details>
+        </section>
+        <section class="panel-section" aria-labelledby="guide-title">
+          <div class="panel-heading"><h2 id="guide-title">使用引导</h2></div>
+          <p class="inline-message">1. 上传 GLB、载入本机模型或使用示例。<br>2. 中英文搜索动作，悬停看短视频。<br>3. 调整绑定参数，点击动画卡片直接生成。<br>4. 完成后在中央播放你的角色，下载 GLB / FBX / ZIP。</p>
+          <p class="metadata-note">没有选模型时，点击卡片只记录动作；任务进行中不会重复提交。部署时需额外准备短视频资源，详见项目 README。</p>
         </section>
       </aside>
     </main>

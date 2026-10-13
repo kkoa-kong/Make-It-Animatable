@@ -1,15 +1,15 @@
 {
   "family": "Noto Sans CJK SC",
-  "subset": "UI literals plus Latin-1",
-  "unicode_count": 544,
+  "subset": "UI literals, Chinese motion display index and Latin-1",
+  "unicode_count": 1418,
   "files": [
     {
       "file": "motion-sans-regular.woff2",
-      "sha256": "cb14ce4e2b4d97e51b5083fe022fc3ee4a9a7756d5c3f83ebeee24b01e1cf17b"
+      "sha256": "75a82d7b1f91d7e430d038a803190764b858d7207c707571265db7f3687ff0d4"
     },
     {
       "file": "motion-sans-bold.woff2",
-      "sha256": "a49896bc598ab581570d49b43e288f47c1dcc27dfebdf465c54b26f69d3be2cc"
+      "sha256": "c628c32b577425e86819aa6e31d90dfbbfa230b672683099a8849fb48241a1f5"
     }
   ]
 }

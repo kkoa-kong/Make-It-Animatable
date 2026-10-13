@@ -53,10 +53,10 @@ def local_path(root, relative):
     return path
 
 
-def get_inventory(revision, directory, report):
-    base = f'https://huggingface.co/api/datasets/{DATASET}/tree/{revision}'
+def get_inventory(revision, directory, report, *, endpoint='https://huggingface.co', recursive=None):
+    base = f'{endpoint}/api/datasets/{DATASET}/tree/{revision}'
     url = base + ('/' + directory if directory else '')
-    params = {'recursive': 'true' if directory else 'false', 'limit': 1000}
+    params = {'recursive': 'true' if (bool(directory) if recursive is None else recursive) else 'false', 'limit': 1000}
     entries = []
     visited = set()
     pages = 0
@@ -80,8 +80,16 @@ def get_inventory(revision, directory, report):
         entries.extend(page)
         url = response.links.get('next', {}).get('url')
         params = None
-        if url and (urlsplit(url).scheme != 'https' or urlsplit(url).netloc != 'huggingface.co'
-                    or not urlsplit(url).path.startswith(base.removeprefix('https://huggingface.co'))):
+        # Mirrors may retain canonical HF Link headers. Keep pagination on
+        # the selected mirror, but only for this pinned dataset tree.
+        if url and endpoint != 'https://huggingface.co':
+            parsed = urlsplit(url)
+            base_path = urlsplit(base).path
+            if (parsed.scheme == 'https' and parsed.netloc == 'huggingface.co'
+                    and (parsed.path == base_path or parsed.path.startswith(base_path + '/'))):
+                url = endpoint + parsed.path + ('?' + parsed.query if parsed.query else '')
+        if url and (urlsplit(url).scheme != 'https' or urlsplit(url).netloc != urlsplit(endpoint).netloc
+                    or not urlsplit(url).path.startswith(urlsplit(base).path)):
             raise ValueError(f'Unexpected inventory pagination URL: {url}')
     report['inventory_pages'][directory or 'root'] = pages
     return entries
@@ -106,8 +114,8 @@ def integrity(path, asset):
     return digest
 
 
-def download(root, revision, asset):
-    relative = asset['path']
+def download(root, revision, asset, *, endpoint='https://huggingface.co', relative_path=None):
+    relative = asset['path'] if relative_path is None else relative_path
     path = local_path(root, relative)
     path.parent.mkdir(parents=True, exist_ok=True)
     cases = []
@@ -118,7 +126,8 @@ def download(root, revision, asset):
         except ValueError as exc:
             cases.append({'path': relative, 'case': 'existing_file_mismatch', 'detail': str(exc)})
     partial = local_path(root, relative + '.part')
-    url = f'https://huggingface.co/datasets/{DATASET}/resolve/{revision}/{quote(relative, safe="/")}'
+    source_path = safe_path(asset['path'])
+    url = f'{endpoint}/datasets/{DATASET}/resolve/{revision}/{quote(source_path, safe="/")}'
     for attempt in range(5):
         try:
             if partial.exists() and partial.stat().st_size >= asset['size']:

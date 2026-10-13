@@ -56,16 +56,18 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
 class AnimationCatalog:
     """Validated, deterministic access to the pinned local Mixamo index.
 
-    Only source metadata is exposed: no inferred tags, FPS, bone hierarchy, or
-    translated descriptions. File existence and containment are checked at load
-    and path resolution; the preparation tool owns FBX SHA-256 verification.
+    English source metadata stays canonical. Optional display translations are
+    validated separately; local previews never redefine source asset paths.
+    The preparation tools own download hash verification.
     """
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, translation_path: Path | None = None):
         self._root = Path(root).resolve()
         self._records: dict[str, dict] = {}
-        self._search_fields: dict[str, tuple[str, str, str, str]] = {}
+        self._search_fields: dict[str, tuple[str, str, str, str, str, str]] = {}
         self._category_ids: dict[str, str] = {}
+        self._translation_path = Path(translation_path) if translation_path is not None else None
+        self._translations: dict[str, dict] = {}
         self._loaded = False
 
     def _require_loaded(self) -> None:
@@ -109,6 +111,7 @@ class AnimationCatalog:
         self._records = {}
         self._search_fields = {}
         self._category_ids = {}
+        self._translations = {}
         index_path = (self._root / "index.json").resolve()
         if not index_path.is_relative_to(self._root):
             raise ValueError("Animation index escapes the catalog root")
@@ -150,17 +153,24 @@ class AnimationCatalog:
                 raise ValueError(f"Invalid animation index motion {position}: {exc}") from exc
 
         records = dict(sorted(records.items(), key=lambda item: (item[1]["filename"], item[1]["motion_id"])))
+        translations = self._load_translations(records)
         search_fields = {}
         for key, record in records.items():
             prompt = _normalize(record["prompt"])
             filename = _normalize(record["filename"])
             stem = _normalize(str(PurePosixPath(record["filename"]).with_suffix("")))
             description = _normalize(record["description"])
-            search_fields[key] = (prompt, filename, stem, description)
+            translation = translations.get(key, {})
+            search_fields[key] = (
+                prompt, filename, stem, description,
+                _normalize(translation.get("prompt_zh", "")),
+                _normalize(translation.get("description_zh", "")),
+            )
         self._records = records
+        self._translations = translations
         self._search_fields = search_fields
         self._category_ids = {
-            key: classify(" ".join(search_fields[key])) for key in records
+            key: classify(" ".join(search_fields[key][:4])) for key in records
         }
         self._loaded = True
 
@@ -178,6 +188,64 @@ class AnimationCatalog:
         if record is None:
             raise KeyError(motion_id)
         return self._asset_path(record["relative_path"])
+
+    def _load_translations(self, records: dict[str, dict]) -> dict[str, dict]:
+        if self._translation_path is None or not self._translation_path.exists():
+            return {}
+        with self._translation_path.open(encoding="utf-8") as stream:
+            index = json.load(stream, object_pairs_hook=_unique_object)
+        if not isinstance(index, dict) or set(index) != _INDEX_FIELDS:
+            raise ValueError("Translation index must contain exactly schema_version, dataset, revision, motions")
+        if type(index["schema_version"]) is not int or index["schema_version"] != 1:
+            raise ValueError("Unsupported translation index schema_version")
+        if index["dataset"] != DATASET or index["revision"] != REVISION:
+            raise ValueError("Translation index provenance does not match the pinned Mixamo resource")
+        if not isinstance(index["motions"], list):
+            raise ValueError("Translation index motions must be a list")
+        translations = {}
+        for position, record in enumerate(index["motions"]):
+            if not isinstance(record, dict) or set(record) != {"motion_id", "prompt_zh", "description_zh"}:
+                raise ValueError(f"Invalid translation motion {position}: unexpected fields")
+            key = _motion_key(record["motion_id"])
+            if key not in records:
+                raise ValueError(f"Translation motion_id is absent from source index: {key}")
+            if key in translations:
+                raise ValueError(f"Duplicate translation motion_id: {key}")
+            if any(not isinstance(record[field], str) or not record[field].strip()
+                   for field in ("prompt_zh", "description_zh")):
+                raise ValueError(f"Invalid translation strings for motion_id: {key}")
+            translations[key] = {field: record[field] for field in ("prompt_zh", "description_zh")}
+        return translations
+
+    def preview_path(self, motion_id: str) -> Path:
+        record = self.get(motion_id)
+        if record is None:
+            raise KeyError(motion_id)
+        boundary = self._root / "previews"
+        path = (boundary / f"{_motion_key(record['motion_id'])}.mp4").resolve()
+        if not path.is_relative_to(boundary):
+            raise ValueError("Animation preview escapes previews directory")
+        if not path.is_file() or path.stat().st_size == 0:
+            raise FileNotFoundError("Animation preview is missing")
+        return path
+
+    def display(self, record: dict) -> dict:
+        """Decorate public metadata without modifying canonical source records."""
+        self._require_loaded()
+        key = _motion_key(record["motion_id"])
+        if key not in self._records:
+            raise KeyError(key)
+        try:
+            self.preview_path(key)
+        except (FileNotFoundError, ValueError):
+            preview_url = None
+        else:
+            preview_url = f"/animations/{key}/preview"
+        return {
+            **record, **self._translations.get(key, {}),
+            "preview_url": preview_url,
+            "preview_status": "ready" if preview_url is not None else "missing",
+        }
 
     def search(
         self, q: str = "", name: str | None = None, limit: int = 20, offset: int = 0,
@@ -199,14 +267,14 @@ class AnimationCatalog:
         for key, record in self._records.items():
             if category is not None and self._category_ids[key] != category:
                 continue
-            prompt, filename, stem, description = self._search_fields[key]
+            prompt, filename, stem, description, prompt_zh, description_zh = self._search_fields[key]
             if exact_name is not None and prompt != exact_name:
                 continue
-            name_text = f"{prompt} {filename}"
-            aggregate = f"{name_text} {description}"
+            name_text = f"{prompt} {filename} {prompt_zh}"
+            aggregate = f"{name_text} {description} {description_zh}"
             if not all(token in aggregate for token in tokens):
                 continue
-            if not tokens or query in (prompt, filename, stem):
+            if not tokens or query in (prompt, filename, stem, prompt_zh):
                 rank = 0
             elif all(token in name_text for token in tokens):
                 rank = 1

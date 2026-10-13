@@ -17,7 +17,7 @@ def main():
 
     corpus = "".join(
         (ROOT / name).read_text(encoding="utf-8")
-        for name in ("web/index.html", "web/app.js", "web/styles.css", "api_categories.py")
+        for name in ("web/index.html", "web/app.js", "web/styles.css", "api_categories.py", "web/motion-index.zh-CN.json")
     )
     codepoints = sorted(set(range(32, 256)) | {ord(char) for char in corpus if ord(char) >= 256})
     unicodes = ",".join(f"U+{codepoint:04X}" for codepoint in codepoints)
@@ -49,7 +49,7 @@ def main():
         + "\n".join(dict.fromkeys(copyright_text)) + "\n\n" + license_section + "\n", encoding="utf-8",
     )
     (destination / "manifest.json").write_text(json.dumps({
-        "family": "Noto Sans CJK SC", "subset": "UI literals plus Latin-1", "unicode_count": len(codepoints), "files": files,
+        "family": "Noto Sans CJK SC", "subset": "UI literals, Chinese motion display index and Latin-1", "unicode_count": len(codepoints), "files": files,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"files": files, "unicode_count": len(codepoints)}, ensure_ascii=False))
 

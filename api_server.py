@@ -127,7 +127,7 @@ _running_jobs = 0
 _jobs = JobStore(JOBS_DIR)
 _job_queue: queue.Queue[str | None] = queue.Queue()
 _stopping = threading.Event()
-_catalog = AnimationCatalog(ANIMATIONS_DIR)
+_catalog = AnimationCatalog(ANIMATIONS_DIR, translation_path=ROOT / "web" / "motion-index.zh-CN.json")
 _catalog_error: str | None = None
 
 # The upstream computational stages return Gradio component updates keyed by
@@ -284,10 +284,11 @@ def _require_catalog() -> AnimationCatalog:
     return _catalog
 
 
-def _with_category(record: dict) -> dict:
-    category = _require_catalog().category(record["motion_id"])
+def _with_display(record: dict) -> dict:
+    catalog = _require_catalog()
+    category = catalog.category(record["motion_id"])
     return {
-        **record,
+        **catalog.display(record),
         "category_id": category["id"],
         "category_label": category["label"],
     }
@@ -313,7 +314,7 @@ def animations(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    result["items"] = [_with_category(record) for record in result["items"]]
+    result["items"] = [_with_display(record) for record in result["items"]]
     return result
 
 
@@ -323,7 +324,7 @@ def animation_info(motion_id: str) -> dict:
     record = catalog.get(motion_id)
     if record is None:
         raise HTTPException(status_code=404, detail="animation not found")
-    return {**_with_category(record), "dataset": catalog.dataset, "revision": catalog.revision}
+    return {**_with_display(record), "dataset": catalog.dataset, "revision": catalog.revision}
 
 
 @app.get("/animations/{motion_id}/file")
@@ -336,6 +337,21 @@ def animation_file(motion_id: str) -> FileResponse:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=410, detail="animation file is missing") from exc
     return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+
+
+@app.get("/animations/{motion_id}/preview")
+def animation_preview(motion_id: str) -> FileResponse:
+    catalog = _require_catalog()
+    try:
+        path = catalog.preview_path(motion_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="animation not found") from exc
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="animation preview is missing") from exc
+    return FileResponse(
+        path, media_type="video/mp4",
+        headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 def _animation_snapshot(request: GenerateRequest) -> dict | None:

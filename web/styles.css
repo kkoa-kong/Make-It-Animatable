@@ -90,15 +90,18 @@ summary{cursor:pointer;min-height:44px;display:flex;align-items:center}
 .animation-card:hover{border-color:#777d95;background:#2b2e3a}
 .animation-card.is-selected{border-color:var(--yellow);background:#30322e;box-shadow:inset 3px 0 var(--yellow)}
 .card-select{display:block;text-align:left;width:100%;padding:14px;background:transparent;border:0}
+.card-media{position:relative;height:150px;margin:-14px -14px 12px;overflow:hidden;display:grid;place-items:center;background:#171921;border-bottom:1px solid var(--border)}
+.card-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.card-media>svg{width:52px;height:70px;fill:none;stroke:var(--blue);stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
+.card-media-status{position:absolute;bottom:8px;left:8px;right:8px;text-align:center;font-size:10px;color:var(--muted);padding:5px;background:#202127dc;border-radius:4px}
+.card-source-name{font-size:9px;color:#9296a7;line-height:1.5;margin-top:5px;overflow-wrap:anywhere}
+.card-preview-actions{display:flex}
+.card-preview-actions>.card-preview{justify-content:center;flex:1}
+.card-preview-actions>.card-preview+ .card-preview{border-left:1px solid var(--border)}
 .card-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}
 .card-category{font-size:10px;color:var(--blue);padding:4px 7px;background:#b5c5f810;border:1px solid #b5c5f823;border-radius:4px}
 .card-kind{font-size:8px;letter-spacing:1px;color:#8e92a5}
 .card-lead{display:flex;align-items:flex-start;gap:12px}
-.motion-symbol{display:grid;place-items:center;width:46px;height:56px;flex:none;background:#353a4b;border:1px solid #50596f;border-radius:7px;color:var(--blue)}
-.motion-symbol svg{width:30px;height:36px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
-.animation-card[data-category=dance] .motion-symbol{color:#d4b9ef;background:#44384f;border-color:#665276}
-.animation-card[data-category=combat] .motion-symbol{color:#e5bd9d;background:#473b32;border-color:#6d5542}
-.animation-card.is-selected .motion-symbol{color:var(--yellow);background:#444739;border-color:#72765a}
 .card-body{min-width:0;flex:1}
 .card-title{font-size:14px;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
 .card-description{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:10px;color:var(--muted);line-height:1.6;margin-top:5px}

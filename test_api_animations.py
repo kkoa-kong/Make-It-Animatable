@@ -339,6 +339,110 @@ class AnimationCatalogTests(unittest.TestCase):
         self.catalog.load()
         self.assertEqual(self.catalog.path(self.records[0]["motion_id"]), target.resolve())
 
+    def write_translations(self, motions=None, **overrides):
+        path = self.root / "motion-index.zh-CN.json"
+        index = {
+            "schema_version": 1, "dataset": DATASET, "revision": REVISION,
+            "motions": motions if motions is not None else [{
+                "motion_id": self.records[0]["motion_id"],
+                "prompt_zh": "行走", "description_zh": "提着公文包向前行走。",
+            }],
+        }
+        index.update(overrides)
+        path.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+        self.catalog = AnimationCatalog(self.root, translation_path=path)
+        return path
+
+    def test_chinese_display_search_preserves_original_source_and_exact_english_name(self):
+        self.write_translations()
+        self.catalog.load()
+        identifier = self.records[0]["motion_id"]
+        self.assertEqual(self.catalog.get(identifier), self.records[0])
+        self.assertEqual(self.catalog.search(q="公文包")["items"], [self.records[0]])
+        self.assertEqual(self.catalog.search(q="行走", name="Walk")["items"], [self.records[0]])
+        self.assertEqual(self.catalog.search(name="行走")["total"], 0)
+        decorated = self.catalog.display(self.catalog.get(identifier))
+        self.assertEqual(decorated["prompt_zh"], "行走")
+        self.assertEqual(decorated["description_zh"], "提着公文包向前行走。")
+        self.assertEqual({key: decorated[key] for key in self.records[0]}, self.records[0])
+        untranslated = self.catalog.display(self.records[1])
+        self.assertNotIn("prompt_zh", untranslated)
+        self.assertIsNone(untranslated["preview_url"])
+        self.assertEqual(untranslated["preview_status"], "missing")
+
+    def test_missing_optional_translation_file_does_not_break_source_catalog(self):
+        self.catalog = AnimationCatalog(self.root, translation_path=self.root / "absent.json")
+        self.catalog.load()
+        self.assertEqual(self.catalog.get(self.records[0]["motion_id"]), self.records[0])
+        self.assertEqual(self.catalog.search(q="行走")["total"], 0)
+
+    def test_translation_provenance_unknown_ids_and_duplicate_ids_fail_explicitly(self):
+        for overrides in (
+            {"schema_version": True}, {"dataset": "other/dataset"}, {"revision": "main"},
+            {"motions": {}}, {"extra": "unexpected"},
+        ):
+            with self.subTest(overrides=overrides):
+                self.write_translations(**overrides)
+                with self.assertRaises(ValueError):
+                    self.catalog.load()
+        translated = {
+            "motion_id": self.records[0]["motion_id"], "prompt_zh": "行走", "description_zh": "行走。",
+        }
+        for motions in (
+            [dict(translated, motion_id="10000000-0000-4000-8000-000000000999")],
+            [translated, translated], [dict(translated, prompt_zh="")],
+            [dict(translated, description_zh=None)], [dict(translated, prompt="replaces source")],
+        ):
+            with self.subTest(motions=motions):
+                self.write_translations(motions=motions)
+                with self.assertRaises(ValueError):
+                    self.catalog.load()
+                with self.assertRaises(RuntimeError):
+                    self.catalog.search()
+
+    def test_preview_display_uses_only_known_same_origin_local_files(self):
+        self.catalog.load()
+        record = self.records[0]
+        self.assertEqual(self.catalog.display(record)["preview_status"], "missing")
+        with self.assertRaises(FileNotFoundError):
+            self.catalog.preview_path(record["motion_id"])
+        preview = self.root / "previews" / f"{record['motion_id']}.mp4"
+        preview.parent.mkdir()
+        preview.write_bytes(b"Local preview fixture")
+        decorated = self.catalog.display(record)
+        self.assertEqual(decorated["preview_url"], f"/animations/{record['motion_id']}/preview")
+        self.assertEqual(decorated["preview_status"], "ready")
+        self.assertEqual(self.catalog.preview_path(record["motion_id"]), preview)
+        self.assertEqual(self.catalog.get(record["motion_id"]), record)
+        preview.write_bytes(b"")
+        self.assertEqual(self.catalog.display(record)["preview_status"], "missing")
+        for identifier in ("../outside", "unknown", "10000000-0000-4000-8000-000000000999"):
+            with self.subTest(identifier=identifier), self.assertRaises(KeyError):
+                self.catalog.preview_path(identifier)
+
+    def test_preview_symlink_escape_is_missing_and_never_exposed(self):
+        self.catalog.load()
+        record = self.records[0]
+        outside = self.root / "outside.mp4"
+        outside.write_bytes(b"Outside fixture")
+        previews = self.root / "previews"
+        previews.mkdir()
+        preview = previews / f"{record['motion_id']}.mp4"
+        preview.symlink_to(outside)
+        self.assertEqual(self.catalog.display(record)["preview_status"], "missing")
+        self.assertIsNone(self.catalog.display(record)["preview_url"])
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            self.catalog.preview_path(record["motion_id"])
+        preview.unlink()
+        previews.rmdir()
+        moved = self.root / "elsewhere"
+        moved.mkdir()
+        (moved / preview.name).write_bytes(b"Outside fixture")
+        previews.symlink_to(moved, target_is_directory=True)
+        self.assertEqual(self.catalog.display(record)["preview_status"], "missing")
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            self.catalog.preview_path(record["motion_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
