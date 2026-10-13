@@ -23,8 +23,8 @@ UI 模式启用后，直接在浏览器打开 `http://agent-models-api.singulari
 1. 上传或拖放 GLB；可先本地预览。明确选择「使用示例角色」才会把实际示例文件作为输入。
 2. 按分类或中文 / 英文名称、描述查找动作；卡片悬停或点击「播放短视频」可快速预览源动作，不生成任务。详细 FBX 骨架预览仍保留。
 3. 先选好模型和绑定参数，再点击动画卡片直接提交，无需再点生成按钮。没有模型时只记录动作；之后选择模型不会自动生成。上传或任务进行中重复点击不追加任务。「重新生成所选动作」用于重试或应用修改后的参数。查看真实上传进度和异步状态，推理阶段不显示虚构百分比。
-4. 播放生成的 GLB，暂停、拖动时间轴、调整倍率、旋转缩放视角，切换骨架或关节点；还可查看预测关节 GLB。
-5. 下载完整 ZIP 或实际单个产物。页面刷新会重新查询上次任务，不会自动再次生成。
+4. UI 任务提供预览时，播放最终 GLB，暂停、拖动时间轴、调整倍率、旋转缩放视角，切换最终角色的真实骨架或关节点叠加；不提供预测关节等中间产物。
+5. 直接下载 `animatable.glb` 和元数据 `manifest.json`，不提供 ZIP。任务未包含网页预览时明确提示，GLB 下载仍可用。页面刷新会重新查询上次任务，不会自动再次生成。
 6. 上传的实际 GLB 文件自动保存至当前浏览器的 IndexedDB。刷新后在右侧「我的模型」点击即可载入，并作为当前生成输入；切换缓存模型不重复保存。删除只移除本机缓存，不删除服务端任务。
 
 模型缓存按浏览器和站点来源隔离（包括端口），不是云端备份；清除站点数据或浏览器回收空间会移除文件。缓存配额不足或不可用时显示明确错误，当前模型仍可预览和提交生成。保存到浏览器不会自动上传给服务端，只有提交生成才上传文件。
@@ -253,7 +253,6 @@ curl -sS -i "$BASE/generate" \
 | `input_rest_parts` | string[] | `[]` | 姿态调整时忽略的部位：`"Fingers"`、`"Arms"`、`"Legs"`、`"Head"` |
 | `input_normal` | boolean | `true` | 当前只接受 `true`，使用网格法线 |
 | `input_bw_fix` | boolean | `true` | 启用蒙皮权重修正 |
-| `input_bw_vis_bone` | string | `"LeftArm"` | 权重可视化骨骼名称，须为支持的 MIA/Mixamo 骨骼 |
 | `input_restore_global` | boolean | `false` | 恢复输入模型的全局变换 |
 | `input_reset_to_rest` | boolean | `true` | 重置到预测的静止姿态 |
 | `input_retarget` | boolean | `true` | 应用动画时启用重定向 |
@@ -276,11 +275,13 @@ HTTP `202 Accepted`，响应示意：
   "error":null,
   "error_code":null,
   "status_url":"/jobs/<任务ID>",
-  "result_url":null
+  "result_url":null,
+  "manifest_url":null,
+  "preview_url":null
 }
 ```
 
-`202` 不是生成完成。URL 字段为相对路径，客户端应拼接 Base URL。
+`202` 不是生成完成。URL 字段为相对路径，客户端应拼接 Base URL。`result_url`、`manifest_url` 在成功前为 `null`；`preview_url` 在成功前或预览不可用时为 `null`。
 
 ## 5. 查询任务与下载结果
 
@@ -289,8 +290,8 @@ JOB_ID='替换为提交响应的任务ID'
 curl -sS "$BASE/jobs/$JOB_ID"
 
 # 状态为 succeeded 后下载：
-curl --fail -sS "$BASE/jobs/$JOB_ID/result" -o mia-v2-result.zip
-unzip -l mia-v2-result.zip
+curl --fail -sS "$BASE/jobs/$JOB_ID/result" -o animatable.glb
+curl --fail -sS "$BASE/jobs/$JOB_ID/manifest" -o manifest.json
 ```
 
 | 任务状态 | 说明 |
@@ -302,28 +303,61 @@ unzip -l mia-v2-result.zip
 
 建议每 2–5 秒查询一次；不是服务端强制限制。
 
-结果为 `application/zip`，包含 `animatable.fbx`、可用的 GLB 预览及中间产物、`manifest.json`。选择动画时输出带烘焙动画的 FBX。库内 ID 请求的 manifest 记录原始动作元数据、Motion ID、SHA-256 和数据集 revision；外部动画来源的 `animation` 字段为 `null`，不生成虚构的库内 ID。
+结果直接为 `model/gltf-binary`，以 `Content-Disposition: attachment; filename="animatable.glb"` 下载；不是 ZIP。Blender 在核心骨架预测、蒙皮、姿态处理、重定向和烘焙后直接导出最终 GLB，不先导出最终 FBX 再转换。选择动画时 GLB 包含烘焙动画，不选动画时为静态绑骨模型。API 不生成调试、中间关节、权重或姿态可视化导出。
 
-结果可重复下载。任务状态、排队任务和上传文件持久化保存；正常停止时等待当前任务完成，排队任务在启动后恢复。被进程异常退出中断的运行中任务标记为失败，不自动重试。上传输入在任务终止后清理，成功 ZIP 保留，无自动过期机制。
+`GET /jobs/{job_id}/manifest` 返回持久化的 `manifest.json`，类型为 `application/json`。库内 ID 请求的 manifest 记录原始动作元数据、Motion ID、SHA-256 和数据集 revision；外部动画来源的 `animation` 字段为 `null`，不生成虚构的库内 ID。`options` 保留本次生成参数，`artifacts` 记录最终产物名：`animatable.glb`、可选的 `animatable_preview.glb`、`manifest.json`。
 
-### 单个产物与 3D 预览
+结果可重复下载。任务状态、排队任务和上传文件持久化保存；正常停止时等待当前任务完成，排队任务在启动后恢复。被进程异常退出中断的运行中任务标记为失败，不自动重试。上传输入在任务终止后清理，成功 GLB 和 manifest 保留并跨服务重启可用，无自动过期机制。部署时保留 `MIA_JOBS_DIR`（默认 `.cache/api-jobs`）并自行管理磁盘。旧的 ZIP-only 成功结果必须重新生成；不会读取旧 ZIP 提取产物，也不提供兼容 shim。
 
-```http
-GET /jobs/{job_id}/artifacts
-GET /jobs/{job_id}/artifacts/{name}
+权重可视化参数 `input_bw_vis_bone` 已从新请求契约移除，提交该参数返回 `422`。升级前持久化的排队请求在执行时移除这个展示专用字段，仍可继续生成；不重新启用中间可视化。
+
+### 成功响应与直接下载入口
+
+成功任务的 URL 字段示意（UI 模式且该任务包含预览）：
+
+```json
+{
+  "job_id":"<任务ID>",
+  "status":"succeeded",
+  "result_url":"/jobs/<任务ID>/result",
+  "manifest_url":"/jobs/<任务ID>/manifest",
+  "preview_url":"/jobs/<任务ID>/preview"
+}
 ```
 
-列表返回 `job_id`、manifest 中的 `animation`、`options`，以及 `items`。每项包含实际文件 `name`、字节数 `size`、`media_type` 和相对 `url`。只列出 ZIP 中实际存在的已知产物，不生成假预览文件。
+| 接口 | 成功响应 |
+| --- | --- |
+| `GET /jobs/{job_id}/result` | 最终 `animatable.glb`，`model/gltf-binary`，attachment 下载 |
+| `GET /jobs/{job_id}/manifest` | 元数据 `manifest.json`，`application/json` |
+| `GET /jobs/{job_id}/preview` | 同一个 GLB，`model/gltf-binary`，inline 文件名 `animatable_preview.glb`；仅 UI 模式且该任务 manifest 含预览时可用 |
+| `GET /jobs/{job_id}/artifacts` | `job_id`、manifest 中的 `animation`、`options` 和直接 URL 清单 `items` |
+
+预览入口与下载入口返回相同 GLB 字节，不进行二次导出、复制或重复存储。非 UI 模式不暴露生成预览，即使磁盘上的任务曾在 UI 模式生成；非 UI 任务的 `preview_url` 为 `null`。成功任务缺少预览时也为 `null`，但仍可正常下载最终 GLB。最终模型的骨架和关节显示由浏览器基于 GLB 内实际骨骼绘制，不依赖额外的预测关节文件。
+
+列表中的每项包含实际产物 `name`、字节数 `size`、`media_type` 和相对 `url`，名称仅为 `animatable.glb`、可选的 `animatable_preview.glb`、`manifest.json`。客户端应使用返回的 `url`，不要拼接旧的 `/artifacts/{name}` 路径；旧的 `GET /jobs/{job_id}/artifacts/{name}` 接口已删除。
+
+清单结构示意（`size` 为响应中的实际字节数；预览项与最终 GLB 大小相同）：
+
+```json
+{
+  "job_id":"<任务ID>",
+  "animation":null,
+  "options":{"input_retarget":true,"input_inplace":true},
+  "items":[
+    {"name":"animatable.glb","size":123456,"media_type":"model/gltf-binary","url":"/jobs/<任务ID>/result"},
+    {"name":"animatable_preview.glb","size":123456,"media_type":"model/gltf-binary","url":"/jobs/<任务ID>/preview"},
+    {"name":"manifest.json","size":1024,"media_type":"application/json","url":"/jobs/<任务ID>/manifest"}
+  ]
+}
+```
 
 ```bash
 curl -sS "$BASE/jobs/$JOB_ID/artifacts"
-curl --fail -sS "$BASE/jobs/$JOB_ID/artifacts/animatable_preview.glb" \
-  -o animatable_preview.glb
-curl --fail -sS "$BASE/jobs/$JOB_ID/artifacts/animatable.fbx" \
-  -o animatable.fbx
+# 仅当 preview_url 非 null 或清单有预览项时：
+curl --fail -sS "$BASE/jobs/$JOB_ID/preview" -o animatable_preview.glb
 ```
 
-`animatable_preview.glb` 用于播放绑定角色；`joints.glb`、`joints_coarse.glb` 为真实预测关节可视化。GLB 类型为 `model/gltf-binary`。单个文件直接从结果 ZIP 流式读取，不允许任意 ZIP 路径提取；未知产物 `404`、未成功任务 `409`、已移除结果 `410`。播放时长来自文件内实际 AnimationClip，不从原始帧数推算。
+未知任务返回 `404`、未成功任务返回 `409`、已移除的成功文件返回 `410`。未启用 UI 或该任务不含预览时，预览接口返回 `404`。播放时长来自 GLB 内实际 AnimationClip，不从原始帧数推算。
 
 
 ## 6. 错误说明

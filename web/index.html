@@ -79,7 +79,6 @@
               <label class="parameter-field" for="rest-pose"><span>静止姿态调整</span><select id="rest-pose"><option value="No">不调整（默认）</option><option value="T-pose">T-pose</option><option value="A-pose">A-pose</option><option value="大-pose">大-pose</option></select></label>
               <fieldset class="parameter-parts"><legend>姿态调整时忽略的部位</legend><div><label><input type="checkbox" name="rest-parts" value="Fingers"> 手指</label><label><input type="checkbox" name="rest-parts" value="Arms"> 手臂</label><label><input type="checkbox" name="rest-parts" value="Legs"> 腿部</label><label><input type="checkbox" name="rest-parts" value="Head"> 头部</label></div><p>仅在选择姿态调整时生效。</p></fieldset>
               <label class="parameter-check"><input id="bw-fix" type="checkbox" checked><span>蒙皮权重修正<small>修正预测的蒙皮权重。</small></span></label>
-              <label class="parameter-field" for="bw-vis-bone"><span>权重可视化骨骼</span><select id="bw-vis-bone"><option value="LeftArm" selected>LeftArm</option></select><small>控制输出权重预览所展示的骨骼，不是绑定范围。</small></label>
               <label class="parameter-check"><input id="restore-global" type="checkbox"><span>恢复模型全局变换<small>恢复输入模型的全局变换。</small></span></label>
               <label class="parameter-check"><input id="reset-to-rest" type="checkbox" checked><span>重置到预测静止姿态</span></label>
               <label class="parameter-check"><input id="retarget" type="checkbox" checked><span>动画重定向<small>将所选动作应用到角色；关闭时不执行重定向。</small></span></label>
@@ -103,12 +102,12 @@
           <ol class="job-steps" aria-label="生成阶段"><li data-stage="upload">上传</li><li data-stage="queued">排队</li><li data-stage="running">绑定</li><li data-stage="succeeded">完成</li></ol>
           <progress id="upload-progress" max="100" value="0" aria-label="真实文件上传进度" hidden></progress>
           <p id="job-message" role="status" aria-live="polite"></p><p class="job-id" id="job-id"></p>
-          <div class="job-actions"><button class="secondary-button" id="retry-job" type="button" hidden>重新连接任务</button><button class="text-button" id="dismiss-job" type="button" hidden>清除任务记录</button><div class="artifact-actions" id="artifact-actions" hidden><button class="secondary-button" id="view-result" type="button" disabled>生成动画</button><button class="secondary-button" id="view-joints" type="button" disabled>预测关节</button><button class="secondary-button" id="view-coarse" type="button" disabled>粗预测关节</button><a class="download-button" id="download-result" download>下载结果 ZIP ↓</a></div></div>
+          <div class="job-actions"><button class="secondary-button" id="retry-job" type="button" hidden>重新连接任务</button><button class="text-button" id="dismiss-job" type="button" hidden>清除任务记录</button><div class="artifact-actions" id="artifact-actions" hidden><button class="secondary-button" id="view-result" type="button" disabled>预览生成动画</button><a class="download-button" id="download-result" download="animatable.glb">下载动画 GLB ↓</a><a class="text-button" id="download-manifest" download="manifest.json" hidden>下载 manifest.json ↓</a></div></div>
           <details id="artifact-details" hidden><summary>所有输出文件</summary><ul id="artifact-list"></ul></details>
         </section>
         <section class="panel-section guide-section" id="usage-guide" aria-labelledby="guide-title">
           <div class="panel-heading"><h2 id="guide-title"><svg class="icon" aria-hidden="true"><use href="#icon-guide"/></svg>使用引导</h2></div>
-          <ol class="guide-steps"><li>上传 GLB、载入本机模型或使用示例。</li><li>中英文搜索动作，悬停看短视频。</li><li>调整绑定参数，点击动画卡片直接生成。</li><li>完成后播放你的角色，下载 GLB / FBX / ZIP。</li></ol>
+          <ol class="guide-steps"><li>上传 GLB、载入本机模型或使用示例。</li><li>中英文搜索动作，悬停看短视频。</li><li>调整绑定参数，点击动画卡片直接生成。</li><li>完成后播放你的角色，下载最终 GLB 和 manifest.json。</li></ol>
           <p class="metadata-note">没有选模型时，点击卡片只记录动作；任务进行中不会重复提交。源动作短视频与生成结果不同。</p>
         </section>
       </aside>

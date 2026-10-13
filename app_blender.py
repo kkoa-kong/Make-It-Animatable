@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import tempfile
 
@@ -151,7 +152,52 @@ def main(args: argparse.Namespace):
             )
 
         blender_utils.update()
-        if args.output_path.endswith(".fbx"):
+        if args.output_path.endswith(".glb"):
+            scn = bpy.context.scene
+            if args.animation_path:
+                # load_mixamo_anim assigns the imported action, or ARP's retargeted
+                # action. Include enabled NLA playback instead of assuming that
+                # the scene's default 1..250 range matches the actual motion.
+                anim = armature_obj.animation_data
+                frame_ranges = []
+                if anim is not None:
+                    if anim.action is not None and blender_utils.get_keyframes([armature_obj]):
+                        frame_ranges.append(tuple(anim.action.frame_range))
+                    if anim.use_nla:
+                        solo_tracks = [track for track in anim.nla_tracks if track.is_solo and not track.mute]
+                        for track in anim.nla_tracks:
+                            if track.mute or (solo_tracks and not track.is_solo):
+                                continue
+                            for strip in track.strips:
+                                if not strip.mute and strip.action is not None:
+                                    frame_ranges.append((strip.frame_start, strip.frame_end))
+                if not frame_ranges:
+                    raise ValueError(f"No playable armature animation found in {args.animation_path}")
+                scn.frame_start = math.floor(min(start for start, _ in frame_ranges))
+                scn.frame_end = math.ceil(max(end for _, end in frame_ranges))
+                scn.frame_set(scn.frame_start)
+
+            # Blender 4.3's SCENE mode samples the evaluated rig, including
+            # constraints/NLA, into one clip. Do not pre-bake another action or
+            # export every compatible (including unused template) action.
+            with blender_utils.Select([mesh_obj, armature_obj]):
+                bpy.ops.export_scene.gltf(
+                    filepath=args.output_path,
+                    check_existing=False,
+                    export_format="GLB",
+                    use_selection=True,
+                    export_skins=True,
+                    export_all_influences=True,
+                    export_animations=bool(args.animation_path),
+                    export_animation_mode="SCENE",
+                    export_anim_scene_split_object=False,
+                    export_frame_range=True,
+                    export_frame_step=1,
+                    export_force_sampling=True,
+                    export_bake_animation=True,
+                    export_rest_position_armature=bool(args.animation_path),
+                )
+        elif args.output_path.endswith(".fbx"):
             bpy.ops.export_scene.fbx(
                 filepath=args.output_path,
                 check_existing=False,

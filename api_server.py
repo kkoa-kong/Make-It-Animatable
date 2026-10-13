@@ -9,7 +9,6 @@ import queue
 import shutil
 import signal
 import threading
-import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -18,12 +17,12 @@ from uuid import UUID
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from fastapi.exceptions import RequestValidationError
 from api_animations import AnimationCatalog
-from api_artifacts import artifact_info, describe_archive, stream_artifact
+from api_artifacts import describe_result, has_preview
 from api_input import input_payload, save_fbx, save_glb
 from api_jobs import JobStore
 from api_mesh_input import prepare_mesh
@@ -64,7 +63,6 @@ class GenerateOptions(BaseModel):
     input_rest_parts: list[REST_PARTS] = Field(default_factory=list)
     input_normal: Literal[True] = True
     input_bw_fix: bool = True
-    input_bw_vis_bone: str = "LeftArm"
     input_restore_global: bool = False
     input_reset_to_rest: bool = True
     input_animation_url: str | None = Field(default=None, min_length=1, description="Optional public HTTP(S) Mixamo FBX URL")
@@ -72,13 +70,6 @@ class GenerateOptions(BaseModel):
     input_retarget: bool = True
     input_inplace: bool = True
 
-    @field_validator("input_bw_vis_bone")
-    @classmethod
-    def valid_visualization_bone(cls, value: str) -> str:
-        valid = {name.lstrip(app_v2.MIXAMO_PREFIX) for name in app_v2.BONES_IDX_DICT}
-        if value not in valid:
-            raise ValueError("input_bw_vis_bone must name a MIA/Mixamo skeleton bone")
-        return value
 
     @field_validator("input_format")
     @classmethod
@@ -253,18 +244,19 @@ def info() -> dict[str, object]:
             "status": "ready" if _catalog_error is None else "unavailable",
             "count": len(_catalog) if _catalog_error is None else 0,
         },
-        "output_format": "application/zip",
+        "output_format": "model/gltf-binary",
         "submission": "asynchronous",
         "ui_enabled": _ui_installed,
         "job_status_url": "/jobs/{job_id}",
         "job_result_url": "/jobs/{job_id}/result",
+        "job_manifest_url": "/jobs/{job_id}/manifest",
+        "job_preview_url": "/jobs/{job_id}/preview" if _ui_installed else None,
         "parameters": [
             "input_no_fingers",
             "input_rest_pose",
             "input_rest_parts",
             "input_normal",
             "input_bw_fix",
-            "input_bw_vis_bone",
             "input_restore_global",
             "input_reset_to_rest",
             "input_animation_url",
@@ -424,7 +416,6 @@ def _run_pipeline(
             ignore_pose_parts=list(request.input_rest_parts),
             input_normal=request.input_normal,
             bw_fix=request.input_bw_fix,
-            bw_vis_bone=request.input_bw_vis_bone,
             restore_global=request.input_restore_global,
             reset_to_rest=request.input_reset_to_rest,
             animation_file=None if animation_path is None else str(animation_path),
@@ -432,45 +423,34 @@ def _run_pipeline(
             inplace=request.input_inplace,
             db=db,
             export_temp=True,
+            export_visuals=False,
+            output_format="glb",
         ):
             pass
         if not db.anim_path or not Path(db.anim_path).is_file():
-            raise RuntimeError("MIA v2 pipeline did not produce an animatable FBX")
+            raise RuntimeError("MIA v2 pipeline did not produce an animatable GLB")
 
-        artifacts = (
-            ("joints_coarse.glb", db.joints_coarse_path),
-            ("normalized_mesh", db.normed_path),
-            ("sample.glb", db.sample_path),
-            ("weights.glb", db.bw_path),
-            ("joints.glb", db.joints_path),
-            ("rest_lbs", db.rest_lbs_path),
-            ("rest.glb", db.rest_vis_path),
-            ("animatable.fbx", db.anim_path),
-            ("animatable_preview.glb", db.anim_vis_path),
+        directory = input_path.parent
+        result_path = directory / "animatable.glb"
+        shutil.move(db.anim_path, result_path)
+        included = ["animatable.glb"]
+        if _ui_installed:
+            included.append("animatable_preview.glb")
+        included.append("manifest.json")
+        (directory / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "model": MODEL_NAME,
+                    "options": request.model_dump(mode="json", exclude={"input_url", "input_animation_url"}),
+                    "animation": animation,
+                    "artifacts": included,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
         )
-        archive_path = input_path.parent / "mia-v2-result.zip"
-        included: list[str] = []
-        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for archive_name, source in artifacts:
-                if source and Path(source).is_file():
-                    archive.write(source, arcname=archive_name)
-                    included.append(archive_name)
-            if not included:
-                raise RuntimeError("MIA v2 pipeline produced no output artifacts")
-            archive.writestr(
-                "manifest.json",
-                json.dumps(
-                    {
-                        "model": MODEL_NAME,
-                        "options": request.model_dump(mode="json", exclude={"input_url", "input_animation_url"}),
-                        "animation": animation,
-                        "artifacts": included,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-            )
-        return archive_path
+        return result_path
     finally:
         output_dir = db.output_dir
         app_v2.clear(db)
@@ -483,6 +463,14 @@ def _public_job(job: dict) -> dict:
     result["status_url"] = f"/jobs/{job['job_id']}"
     result["result_url"] = (
         f"/jobs/{job['job_id']}/result" if job["status"] == "succeeded" else None
+    )
+    result["manifest_url"] = (
+        f"/jobs/{job['job_id']}/manifest" if job["status"] == "succeeded" else None
+    )
+    result["preview_url"] = (
+        f"/jobs/{job['job_id']}/preview"
+        if job["status"] == "succeeded" and _ui_installed and has_preview(_jobs.directory(job["job_id"]))
+        else None
     )
     return result
 
@@ -505,6 +493,8 @@ def _process_jobs() -> None:
             uploaded = payload.pop("_uploaded_input", False)
             uploaded_animation = payload.pop("_uploaded_animation", False)
             animation = payload.pop("_animation", None)
+            # Migrate queued requests saved before visual-only API options were removed.
+            payload.pop("input_bw_vis_bone", None)
             request = GenerateRequest.model_validate(payload)
             if request.animation_id is not None and animation != _animation_snapshot(request):
                 raise ValueError("animation library metadata changed since task submission")
@@ -525,10 +515,10 @@ def _process_jobs() -> None:
                 code = 500
             _jobs.update(job_id, "failed", error=str(exc), error_code=code)
         finally:
-            # Keep only successful result archives; requests and states live in SQLite.
+            # Keep final successful files; requests and states live in SQLite.
             job = _jobs.get(job_id)
             for path in work_dir.iterdir():
-                if job and job["status"] == "succeeded" and path.name == "mia-v2-result.zip":
+                if job and job["status"] == "succeeded" and path.name in {"animatable.glb", "manifest.json"}:
                     continue
                 if path.is_dir():
                     shutil.rmtree(path)
@@ -615,48 +605,56 @@ def job_status(job_id: str) -> dict:
     return _public_job(job)
 
 
-def _job_archive(job_id: str) -> Path:
+def _job_result_directory(job_id: str) -> Path:
     job = _jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job["status"] != "succeeded":
         raise HTTPException(status_code=409, detail="job has no successful result")
-    archive_path = _jobs.directory(job_id) / "mia-v2-result.zip"
-    if not archive_path.is_file():
-        raise HTTPException(status_code=410, detail="job result is no longer available")
-    return archive_path
+    directory = _jobs.directory(job_id)
+    if not (directory / "animatable.glb").is_file() or not (directory / "manifest.json").is_file():
+        raise HTTPException(status_code=410, detail="job result is no longer available; regenerate legacy ZIP-only jobs")
+    return directory
 
 
 @app.get("/jobs/{job_id}/result")
 def job_result(job_id: str) -> FileResponse:
     return FileResponse(
-        _job_archive(job_id), media_type="application/zip", filename="mia-v2-result.zip"
+        _job_result_directory(job_id) / "animatable.glb",
+        media_type="model/gltf-binary",
+        filename="animatable.glb",
+    )
+
+
+@app.get("/jobs/{job_id}/manifest")
+def job_manifest(job_id: str) -> FileResponse:
+    return FileResponse(
+        _job_result_directory(job_id) / "manifest.json",
+        media_type="application/json",
+        filename="manifest.json",
+        content_disposition_type="inline",
+    )
+
+
+@app.get("/jobs/{job_id}/preview")
+def job_preview(job_id: str) -> FileResponse:
+    directory = _job_result_directory(job_id)
+    if not _ui_installed or not has_preview(directory):
+        raise HTTPException(status_code=404, detail="job preview is not enabled")
+    return FileResponse(
+        directory / "animatable.glb",
+        media_type="model/gltf-binary",
+        filename="animatable_preview.glb",
+        content_disposition_type="inline",
     )
 
 
 @app.get("/jobs/{job_id}/artifacts")
 def job_artifacts(job_id: str) -> dict:
-    result = describe_archive(_job_archive(job_id))
+    result = describe_result(_job_result_directory(job_id), preview_enabled=_ui_installed)
     for item in result["items"]:
-        item["url"] = f"/jobs/{job_id}/artifacts/{item['name']}"
+        item["url"] = f"/jobs/{job_id}/{item.pop('endpoint')}"
     return {"job_id": job_id, **result}
-
-
-@app.get("/jobs/{job_id}/artifacts/{name}")
-def job_artifact(job_id: str, name: str) -> StreamingResponse:
-    path = _job_archive(job_id)
-    try:
-        info = artifact_info(path, name)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="artifact not found") from exc
-    return StreamingResponse(
-        stream_artifact(path, name),
-        media_type=info["media_type"],
-        headers={
-            "Content-Length": str(info["size"]),
-            "Content-Disposition": f'inline; filename="{name}"',
-        },
-    )
 
 
 def enable_ui() -> None:

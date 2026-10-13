@@ -599,7 +599,10 @@ def get_masked_mesh(mesh: trimesh.Trimesh, mask: np.ndarray):
     return mesh
 
 
-def prepare_input(input_path: str, is_gs=False, opacity_threshold=0.0, db: DB = None, export_temp=False):
+def prepare_input(
+    input_path: str, is_gs=False, opacity_threshold=0.0, db: DB = None, export_temp=False,
+    export_visuals=True, output_format: str = None,
+):
     if not (input_path and os.path.isfile(input_path)):
         raise gr.Error(f"Input file not found: '{input_path}', please re-upload the file")
 
@@ -658,16 +661,17 @@ def prepare_input(input_path: str, is_gs=False, opacity_threshold=0.0, db: DB = 
         output_dir = os.path.join(os.path.dirname(input_path), os.path.splitext(os.path.basename(input_path))[0])
         os.makedirs(output_dir, exist_ok=True)
     db.output_dir = output_dir
-    db.joints_coarse_path = os.path.join(output_dir, "joints_coarse.glb")
-    db.normed_path = os.path.join(output_dir, f"normed{os.path.splitext(input_path)[-1]}")
-    db.sample_path = os.path.join(output_dir, "sample.glb")
-    db.bw_path = os.path.join(output_dir, "bw.glb")
-    db.joints_path = os.path.join(output_dir, "joints.glb")
-    db.rest_lbs_path = os.path.join(output_dir, f"rest_lbs.{'ply' if is_gs else 'glb'}")
-    db.rest_vis_path = os.path.join(output_dir, "rest.glb")
+    db.joints_coarse_path = os.path.join(output_dir, "joints_coarse.glb") if export_visuals else None
+    db.normed_path = os.path.join(output_dir, f"normed{os.path.splitext(input_path)[-1]}") if export_visuals else None
+    db.sample_path = os.path.join(output_dir, "sample.glb") if export_visuals else None
+    db.bw_path = os.path.join(output_dir, "bw.glb") if export_visuals else None
+    db.joints_path = os.path.join(output_dir, "joints.glb") if export_visuals else None
+    db.rest_lbs_path = os.path.join(output_dir, f"rest_lbs.{'ply' if is_gs else 'glb'}") if export_visuals else None
+    db.rest_vis_path = os.path.join(output_dir, "rest.glb") if export_visuals else None
     input_filename = os.path.splitext(os.path.basename(input_path))[0]
-    db.anim_path = os.path.join(output_dir, f"{input_filename}.{'blend' if is_gs else 'fbx'}")
-    db.anim_vis_path = os.path.join(output_dir, f"{input_filename}.glb")
+    output_format = output_format or ("blend" if is_gs else "fbx")
+    db.anim_path = os.path.join(output_dir, f"{'animatable' if output_format == 'glb' else input_filename}.{output_format}")
+    db.anim_vis_path = os.path.join(output_dir, f"{input_filename}.glb") if export_visuals and output_format == "fbx" else None
 
     return {state: db}
 
@@ -682,7 +686,7 @@ def model_forward_coarse(pts: torch.Tensor, pts_normal: torch.Tensor) -> torch.T
     return joints.cpu()
 
 
-def preprocess(db: DB):
+def preprocess(db: DB, export_visuals=True):
     mesh = db.mesh
     pts = db.pts
     pts_normal = db.pts_normal
@@ -709,14 +713,16 @@ def preprocess(db: DB):
     if db.is_mesh:
         pts_normal = F.normalize(rotate.transform_normals(pts_normal), dim=-1)
         verts_normal = F.normalize(rotate.transform_normals(verts_normal), dim=-1)
-    vis_joints(
-        mesh.vertices, norm.inverse().transform_points(joints), db.faces, bones_idx_dict=BONES_IDX_DICT, mark="o"
-    ).export(db.joints_coarse_path)
+    if export_visuals:
+        vis_joints(
+            mesh.vertices, norm.inverse().transform_points(joints), db.faces, bones_idx_dict=BONES_IDX_DICT, mark="o"
+        ).export(db.joints_coarse_path)
     mesh.vertices = verts.squeeze(0).cpu().numpy()
     if db.gs is not None:
         db.gs = transform_gs(db.gs, global_transform)
-        save_gs(db.gs, db.normed_path)
-    else:
+        if export_visuals:
+            save_gs(db.gs, db.normed_path)
+    elif export_visuals:
         mesh.export(db.normed_path)
 
     if hands_resample_ratio > 0:
@@ -738,30 +744,31 @@ def preprocess(db: DB):
         pts_normal = pts_normal.squeeze(0).cpu().numpy()
         pts = np.concatenate([pts, pts_normal], axis=-1)
 
-    try:
-        if db.is_mesh:
-            if isinstance(mesh.visual, trimesh.visual.TextureVisuals):
-                try:
-                    visual = mesh.visual.to_color()
-                except Exception:
+    if export_visuals:
+        try:
+            if db.is_mesh:
+                if isinstance(mesh.visual, trimesh.visual.TextureVisuals):
+                    try:
+                        visual = mesh.visual.to_color()
+                    except Exception:
+                        visual = None
+                elif isinstance(mesh.visual, trimesh.visual.ColorVisuals):
+                    visual = mesh.visual
+                else:
                     visual = None
-            elif isinstance(mesh.visual, trimesh.visual.ColorVisuals):
-                visual = mesh.visual
+                pts_colors = (
+                    None
+                    if visual is None or visual.vertex_colors.shape[0] != mesh.vertices.shape[0]
+                    else visual.vertex_colors[mesh.kdtree.query(pts[..., :3])[1]]
+                )
+            elif mesh.colors.shape[0] > 0:
+                pts_colors = mesh.colors[mesh.kdtree.query(pts)[1]]
             else:
-                visual = None
-            pts_colors = (
-                None
-                if visual is None or visual.vertex_colors.shape[0] != mesh.vertices.shape[0]
-                else visual.vertex_colors[mesh.kdtree.query(pts[..., :3])[1]]
-            )
-        elif mesh.colors.shape[0] > 0:
-            pts_colors = mesh.colors[mesh.kdtree.query(pts)[1]]
-        else:
+                pts_colors = None
+        except Exception:
             pts_colors = None
-    except Exception:
-        pts_colors = None
-    pts_vis = trimesh.PointCloud(vertices=pts[..., :3], colors=pts_colors)
-    pts_vis.export(db.sample_path)
+        pts_vis = trimesh.PointCloud(vertices=pts[..., :3], colors=pts_colors)
+        pts_vis.export(db.sample_path)
     pts = torch.from_numpy(pts).unsqueeze(0)
     if db.is_mesh:
         pts, pts_normal = torch.chunk(pts, 2, dim=-1)
@@ -771,6 +778,9 @@ def preprocess(db: DB):
     db.pts = pts
     db.pts_normal = pts_normal
     db.global_transform = global_transform
+
+    if not export_visuals:
+        return {state: db}
 
     return {
         output_joints_coarse: change_Model3D(db.joints_coarse_path, display_mode="wireframe", is_pc=not db.is_mesh),
@@ -852,7 +862,7 @@ def infer(input_normal: bool, db: DB):
     return {state: db}
 
 
-def vis(bw_fix: bool, bw_vis_bone: str, no_fingers: bool, restore_global: bool, db: DB):
+def vis(bw_fix: bool, bw_vis_bone: str, no_fingers: bool, restore_global: bool, db: DB, export_visuals=True):
     verts = db.verts
     bw = db.bw
     joints = db.joints
@@ -962,11 +972,14 @@ def vis(bw_fix: bool, bw_vis_bone: str, no_fingers: bool, restore_global: bool, 
     bw = bw.squeeze(0).cpu().numpy()
     verts = verts.squeeze(0).cpu().numpy()
     db.mesh.vertices = verts
-    vis_weights(verts, bw, db.faces, vis_bone_index=BONES_IDX_DICT[f"{MIXAMO_PREFIX}{bw_vis_bone}"]).export(db.bw_path)
+    if export_visuals:
+        vis_weights(verts, bw, db.faces, vis_bone_index=BONES_IDX_DICT[f"{MIXAMO_PREFIX}{bw_vis_bone}"]).export(db.bw_path)
     joints, joints_tail = joints.squeeze(0)[..., :3].cpu().numpy(), joints.squeeze(0)[..., 3:].cpu().numpy()
-    vis_joints(verts, joints, db.faces, bones_idx_dict=BONES_IDX_DICT).export(db.joints_path)
+    if export_visuals:
+        vis_joints(verts, joints, db.faces, bones_idx_dict=BONES_IDX_DICT).export(db.joints_path)
 
-    if pose is not None:
+    # Mesh LBS here is display-only; Gaussian rest splats are also used by Blender.
+    if pose is not None and (export_visuals or db.gs is not None):
         lbs_transform = np.einsum("kij,nk->nij", pose, bw)
         if db.gs is None:
             rest_joints = apply_transform(joints, pose)
@@ -975,13 +988,17 @@ def vis(bw_fix: bool, bw_vis_bone: str, no_fingers: bool, restore_global: bool, 
             ).export(db.rest_lbs_path)
         else:
             db.gs_rest = transform_gs(db.gs, lbs_transform)
-            save_gs(db.gs_rest, db.rest_lbs_path)
+            if export_visuals:
+                save_gs(db.gs_rest, db.rest_lbs_path)
 
     db.verts = verts
     db.bw = bw
     db.joints = joints
     db.joints_tail = joints_tail
     db.pose = pose
+
+    if not export_visuals:
+        return {state: db}
 
     return {
         output_joints: change_Model3D(db.joints_path, display_mode="wireframe", is_pc=not db.is_mesh),
@@ -1028,6 +1045,7 @@ def vis_blender(
     inplace: bool,
     restore_global: bool,
     db: DB,
+    export_visuals=True,
 ):
     if any(x is None for x in (db.mesh, db.joints, db.joints_tail, db.bw)):
         raise gr.Error("Run the inference first")
@@ -1066,7 +1084,7 @@ def vis_blender(
         output_path=db.anim_path,
         template_path=template_path,
         keep_raw=restore_global,
-        rest_path=db.rest_vis_path if db.is_mesh else None,
+        rest_path=db.rest_vis_path if export_visuals and db.is_mesh else None,
         pose_local=False,
         reset_to_rest=reset_to_rest,
         remove_fingers=remove_fingers,
@@ -1094,7 +1112,7 @@ def vis_blender(
 
     print(f"Output animatable model: '{db.anim_path}'")
 
-    if db.is_mesh and db.anim_path.endswith(".fbx") and os.path.isfile(db.anim_path):
+    if export_visuals and db.is_mesh and db.anim_path.endswith(".fbx") and os.path.isfile(db.anim_path):
         with tempfile.TemporaryDirectory() as tmpdir:
             # https://github.com/facebookincubator/FBX2glTF
             fbx2glb_path = "util/FBX2glTF"
@@ -1106,6 +1124,9 @@ def vis_blender(
     else:
         db.rest_vis_path = None
         db.anim_vis_path = None
+
+    if not export_visuals:
+        return {state: db}
 
     anim_path = db.anim_path
     if os.path.isfile(db.anim_path):
@@ -1149,23 +1170,38 @@ def _pipeline(
     inplace=True,
     db: DB = None,
     export_temp=False,
+    export_visuals=True,
+    output_format: str = None,
 ):
+    """Run the shared rigging pipeline; API callers disable visuals and request direct GLB.
+
+    Defaults retain the standalone Gradio visualizations and FBX/GS blend downloads.
+    Lean mode yields only state and leaves preview aliasing to the API server.
+    """
     if db is None:
         db = DB()
     with TimePrints():
         print("*" * 50)
     clear(db)
     fix_random()
-    # Magic sleep to fix the random pydantic_core._pydantic_core.ValidationError in Gradio: https://github.com/gradio-app/gradio/issues/9366#issuecomment-2412903101
-    time.sleep(0.1)
-    yield prepare_input(input_path, is_gs, opacity_threshold, db, export_temp)
-    time.sleep(0.1)
-    yield preprocess(db)
-    time.sleep(0.1)
+    # Gradio's staged updates need this workaround; API execution does not.
+    if export_visuals:
+        time.sleep(0.1)
+    yield prepare_input(
+        input_path, is_gs, opacity_threshold, db, export_temp,
+        export_visuals=export_visuals, output_format=output_format,
+    )
+    if export_visuals:
+        time.sleep(0.1)
+    yield preprocess(db, export_visuals=export_visuals)
+    if export_visuals:
+        time.sleep(0.1)
     yield infer(input_normal, db)
-    time.sleep(0.1)
-    yield vis(bw_fix, bw_vis_bone, no_fingers, restore_global, db)
-    time.sleep(0.1)
+    if export_visuals:
+        time.sleep(0.1)
+    yield vis(bw_fix, bw_vis_bone, no_fingers, restore_global, db, export_visuals=export_visuals)
+    if export_visuals:
+        time.sleep(0.1)
     yield vis_blender(
         reset_to_rest,
         no_fingers,
@@ -1176,9 +1212,14 @@ def _pipeline(
         inplace,
         restore_global,
         db,
+        export_visuals=export_visuals,
     )
-    time.sleep(0.1)
-    yield finish(db=None)  # keep the outputs for possible re-animation later
+    if export_visuals:
+        time.sleep(0.1)
+        yield finish(db=None)  # keep the outputs for possible re-animation later
+    else:
+        clear()
+        yield {state: db}
 
 
 def init_models():

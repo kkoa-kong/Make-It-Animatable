@@ -7,7 +7,7 @@ const LAST_JOB_KEY = 'mia.motion-studio.last-job';
 const state = {
   file: null, fileURL: null, selection: null, category: '', query: '', offset: 0,
   total: 0, catalogLoading: false, service: null, submitting: false, job: null,
-  jobBusy: false, artifacts: null, pollTimer: null, pollVersion: 0,
+  jobBusy: false, previewURL: null, pollTimer: null, pollVersion: 0,
   catalogVersion: 0, catalogController: null, viewerVersion: 0,
 };
 let viewer = null;
@@ -464,12 +464,14 @@ function stageJob(stage, message) {
   }
 }
 function clearArtifacts() {
-  state.artifacts = null;
+  state.previewURL = null;
   $('artifact-actions').hidden = true;
   $('artifact-details').hidden = true;
   $('artifact-list').replaceChildren();
   $('download-result').removeAttribute('href');
-  for (const id of ['view-result', 'view-joints', 'view-coarse']) $(id).disabled = true;
+  $('download-manifest').removeAttribute('href');
+  $('download-manifest').hidden = true;
+  $('view-result').disabled = true;
 }
 function uploadRequest(form) {
   return new Promise((resolve, reject) => {
@@ -513,7 +515,6 @@ function bindingOptions() {
     input_rest_parts: restPose === 'No' ? [] : [...document.querySelectorAll('[name="rest-parts"]:checked')].map((input) => input.value),
     input_normal: true,
     input_bw_fix: $('bw-fix').checked,
-    input_bw_vis_bone: $('bw-vis-bone').value,
     input_restore_global: $('restore-global').checked,
     input_reset_to_rest: $('reset-to-rest').checked,
     input_retarget: $('retarget').checked,
@@ -573,16 +574,19 @@ async function loadArtifacts(job, version, autoPreview = true) {
     li.append(link);
     links.push(li);
   }
-  state.artifacts = byName;
   $('artifact-list').replaceChildren(...links);
   $('artifact-details').hidden = !links.length;
-  $('view-result').disabled = !viewer || !byName.has('animatable_preview.glb');
-  $('view-joints').disabled = !viewer || !byName.has('joints.glb');
-  $('view-coarse').disabled = !viewer || !byName.has('joints_coarse.glb');
+  state.previewURL = job.preview_url ? localURL(job.preview_url) : byName.get('animatable_preview.glb')?.url || null;
+  $('view-result').disabled = !viewer || !state.previewURL;
+  const manifestURL = job.manifest_url ? localURL(job.manifest_url) : byName.get('manifest.json')?.url;
+  if (manifestURL) {
+    $('download-manifest').href = manifestURL;
+    $('download-manifest').hidden = false;
+  }
   const animationName = artifacts.animation?.filename || artifacts.animation?.prompt;
-  stageJob('succeeded', `生成已完成，${links.length} 个真实输出文件可下载。${animationName ? `任务动作：${animationName}。` : ''}${!byName.has('animatable_preview.glb') ? '此任务未包含可播放 GLB；可下载实际输出文件。' : '视图下方时间轴可播放生成角色；切换骨架或关节查看绑定。'}`);
+  stageJob('succeeded', `生成已完成，可下载最终 animatable.glb 和 manifest.json。${animationName ? `任务动作：${animationName}。` : ''}${!state.previewURL ? '此任务未提供网页预览；GLB 下载不受影响。' : '视图下方时间轴可播放生成角色；切换骨架或关节查看最终绑定。'}`);
   $('retry-job').hidden = true;
-  if (autoPreview && byName.has('animatable_preview.glb')) viewArtifact('animatable_preview.glb');
+  if (autoPreview && state.previewURL) viewResult();
 }
 async function pollJob() {
   if (!state.job?.job_id) return;
@@ -603,8 +607,14 @@ async function pollJob() {
     if (job.status === 'failed') stageJob('failed', `任务失败：${errorText(job.error || '服务未提供错误详情')}。可保留文件和动作选择后重新生成。`);
     if (job.status === 'succeeded') {
       $('artifact-actions').hidden = false;
-      $('download-result').href = localURL(job.result_url || `/jobs/${encodeURIComponent(id)}/result`);
-      stageJob('succeeded', '生成完成，正在读取真实输出文件…');
+      $('download-result').href = localURL(job.result_url);
+      if (job.manifest_url) {
+        $('download-manifest').href = localURL(job.manifest_url);
+        $('download-manifest').hidden = false;
+      }
+      state.previewURL = job.preview_url ? localURL(job.preview_url) : null;
+      $('view-result').disabled = !viewer || !state.previewURL;
+      stageJob('succeeded', `生成完成，GLB 可直接下载；${state.previewURL ? '正在读取输出文件清单…' : '此任务未提供网页预览，正在读取输出文件清单…'}`);
       await loadArtifacts(job, version);
     }
     if (state.jobBusy && version === state.pollVersion) state.pollTimer = setTimeout(pollJob, 2000);
@@ -621,13 +631,11 @@ async function pollJob() {
     }
   } finally { updateRunState(); }
 }
-function viewArtifact(name) {
-  const artifact = state.artifacts?.get(name);
-  if (!artifact) return;
-  const predicted = name !== 'animatable_preview.glb';
-  return loadView(artifact.url, {
-    label: predicted ? name === 'joints_coarse.glb' ? '生成结果 · 粗预测关节' : '生成结果 · 预测关节' : '生成结果 · 角色动画',
-    note: predicted ? `当前显示任务 ${state.job.job_id} 的真实 ${name}，并非源动作骨架。` : `任务 ${state.job.job_id} 的绑定角色动画；播放时长来自实际动画片段。`,
+function viewResult() {
+  if (!state.previewURL) return;
+  return loadView(state.previewURL, {
+    label: '生成结果 · 角色动画',
+    note: `任务 ${state.job.job_id} 的最终绑定角色；预览与下载是同一 GLB，播放时长来自实际动画片段。`,
   });
 }
 function dismissJob() {
@@ -652,15 +660,6 @@ function reconnectLastJob() {
   pollJob();
 }
 
-const visualizationBones = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head'];
-for (const side of ['Left', 'Right']) {
-  visualizationBones.push(...['Shoulder', 'Arm', 'ForeArm', 'Hand'].map((part) => side + part));
-  for (const finger of ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']) {
-    for (let joint = 1; joint <= 3; joint++) visualizationBones.push(`${side}Hand${finger}${joint}`);
-  }
-  visualizationBones.push(...['UpLeg', 'Leg', 'Foot', 'ToeBase'].map((part) => side + part));
-}
-$('bw-vis-bone').replaceChildren(...visualizationBones.map((name) => new Option(name, name, name === 'LeftArm', name === 'LeftArm')));
 $('advanced-form').addEventListener('submit', (event) => event.preventDefault());
 
 try {
@@ -690,9 +689,7 @@ $('refresh-health').addEventListener('click', refreshHealth);
 $('generate').addEventListener('click', generate);
 $('retry-job').addEventListener('click', pollJob);
 $('dismiss-job').addEventListener('click', dismissJob);
-$('view-result').addEventListener('click', () => viewArtifact('animatable_preview.glb'));
-$('view-joints').addEventListener('click', () => viewArtifact('joints.glb'));
-$('view-coarse').addEventListener('click', () => viewArtifact('joints_coarse.glb'));
+$('view-result').addEventListener('click', viewResult);
 $('categories').addEventListener('click', (event) => {
   const button = event.target.closest('[data-category]');
   if (!button) return;
