@@ -113,6 +113,10 @@ For extensionless mesh URLs, supply `input_format`, for example `"glb"` or `"fbx
 
 Job metadata and requests persist in SQLite under `MIA_JOBS_DIR`, defaulting to `.cache/api-jobs`. Successful tasks persist the final `animatable.glb` and `manifest.json`, not a ZIP. Blender exports the final GLB directly after rigging, retargeting and animation baking; the API does not generate debug/intermediate visualizations or export a final FBX and convert it. In UI mode, the optional `animatable_preview.glb` entry is an inline route to the same GLB bytes, not a second export, file copy or duplicated storage. Non-UI mode exposes no generated preview. The manifest's `artifacts` list records `animatable.glb`, optional `animatable_preview.glb`, and `manifest.json`; library animation metadata and request options remain available. `result_url` and `manifest_url` are `null` until success, and `preview_url` is also `null` whenever preview is unavailable. Results remain downloadable repeatedly and survive service restarts. Queued jobs resume on startup; interrupted running jobs become failed rather than silently being retried. There is no automatic result expiration: retain this directory during deployment changes and manage its disk usage explicitly. Old ZIP-only results must be regenerated; there is no ZIP compatibility shim or `/jobs/{job_id}/artifacts/{name}` endpoint.
 
+The single-process API worker automatically caches clean, bound Blender characters for **24 hours** in `.cache/rig-cache` (`MIA_RIG_CACHE_DIR` overrides the writable directory); no Redis or request changes are required. Keys combine model-content SHA-256, binding options and a once-per-model-initialization content fingerprint of weights/VAE, template, binding code and Blender version. Changing only the motion, retargeting, in-place setting or UI mode reuses the base, skipping prediction and rebuilding bones/weights; motion application, baking and final GLB export still run. Packed textures and binding pose live in the internal `.blend`, before any motion is applied. Restart after engine/dependency updates.
+
+TTL is fixed from successful cache publication, not renewed on hits. Expired lookups miss immediately; startup and validated generation requests opportunistically launch one throttled background cleaner (at most once per five minutes). Idle services may retain expired files until the next hook. Active entries/staging are protected, publication is atomic, and failed jobs do not publish partial bases. Cache cleanup never removes successful job GLB/manifest files. Preserve the directory for reuse across restarts, but **do not share it across worker processes**. Model uploads/URL downloads are still required before content-based lookup; cache files are not public artifacts.
+
 #### Local Mixamo motion library
 
 `data/mixamo/` contains the original `animation_motion/`, `animation_motion_prompts.json`, `animation_motion_frames.json`, and `animation_bones.json` from `Linzhan/Mixamo-Animations-Characters`, plus the deterministic derived `index.json` and `validation_report.json`. It is separate from the existing `data/Mixamo/` skeleton templates. English source descriptions remain untouched; Chinese display translations are stored separately in `web/motion-index.zh-CN.json`.
@@ -244,6 +248,8 @@ docker run --rm --gpus '"device=4"' -p 8081:8081 \
   -v "$HOME/.cache/hy3dgen:/models/hunyuan:ro" \
   -v "$PWD/data/mixamo:/models/mixamo:ro" \
   -v "$PWD/.cache/api-jobs:/var/lib/mia-v2/jobs" \
+  -v "$PWD/.cache/rig-cache:/var/lib/mia-v2/rig-cache" \
+  -e MIA_RIG_CACHE_DIR=/var/lib/mia-v2/rig-cache \
   mia-v2-api:dev
 ```
 Container deployment is API-only by default (`MIA_UI=0`): do not pass `--ui` or `MIA_UI=1` in the deployment command. The separately documented host UI is a development option, not the container startup mode.

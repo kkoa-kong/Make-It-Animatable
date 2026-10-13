@@ -1046,8 +1046,13 @@ def vis_blender(
     restore_global: bool,
     db: DB,
     export_visuals=True,
+    rig_cache_path: str | None = None,
+    rig_cache_hit: bool = False,
 ):
-    if any(x is None for x in (db.mesh, db.joints, db.joints_tail, db.bw)):
+    if rig_cache_hit:
+        if not rig_cache_path:
+            raise ValueError("A cache hit requires rig_cache_path")
+    elif any(x is None for x in (db.mesh, db.joints, db.joints_tail, db.bw)):
         raise gr.Error("Run the inference first")
 
     if db.gs is not None:
@@ -1058,7 +1063,7 @@ def vis_blender(
             db.gs_rest = db.gs_rest.numpy()
     template_path = TEMPLATE_PATH
 
-    data = dict(
+    data = None if rig_cache_hit else dict(
         mesh=db.mesh,
         gs=db.gs_rest if reset_to_rest else db.gs,
         joints=db.joints,
@@ -1091,6 +1096,8 @@ def vis_blender(
         animation_path=animation_file,
         retarget=retarget,
         inplace=inplace,
+        rig_cache_path=rig_cache_path,
+        rig_cache_hit=rig_cache_hit,
     )
 
     if is_main_thread():
@@ -1172,11 +1179,15 @@ def _pipeline(
     export_temp=False,
     export_visuals=True,
     output_format: str = None,
+    rig_cache_path: str | None = None,
+    rig_cache_hit: bool = False,
 ):
     """Run the shared rigging pipeline; API callers disable visuals and request direct GLB.
 
     Defaults retain the standalone Gradio visualizations and FBX/GS blend downloads.
     Lean mode yields only state and leaves preview aliasing to the API server.
+    A rig_cache_hit reuses only a clean bound base and skips every prediction
+    stage. On a miss, rig_cache_path saves that base before applying animation.
     """
     if db is None:
         db = DB()
@@ -1187,21 +1198,30 @@ def _pipeline(
     # Gradio's staged updates need this workaround; API execution does not.
     if export_visuals:
         time.sleep(0.1)
-    yield prepare_input(
-        input_path, is_gs, opacity_threshold, db, export_temp,
-        export_visuals=export_visuals, output_format=output_format,
-    )
-    if export_visuals:
-        time.sleep(0.1)
-    yield preprocess(db, export_visuals=export_visuals)
-    if export_visuals:
-        time.sleep(0.1)
-    yield infer(input_normal, db)
-    if export_visuals:
-        time.sleep(0.1)
-    yield vis(bw_fix, bw_vis_bone, no_fingers, restore_global, db, export_visuals=export_visuals)
-    if export_visuals:
-        time.sleep(0.1)
+    if rig_cache_hit:
+        if not rig_cache_path:
+            raise ValueError("A cache hit requires rig_cache_path")
+        if export_visuals or output_format != "glb":
+            raise ValueError("Rig cache hits require export_visuals=False and output_format='glb'")
+        db.output_dir = tempfile.mkdtemp(prefix="mia_rig_hit_")
+        db.anim_path = os.path.join(db.output_dir, "animatable.glb")
+        db.anim_vis_path = None
+    else:
+        yield prepare_input(
+            input_path, is_gs, opacity_threshold, db, export_temp,
+            export_visuals=export_visuals, output_format=output_format,
+        )
+        if export_visuals:
+            time.sleep(0.1)
+        yield preprocess(db, export_visuals=export_visuals)
+        if export_visuals:
+            time.sleep(0.1)
+        yield infer(input_normal, db)
+        if export_visuals:
+            time.sleep(0.1)
+        yield vis(bw_fix, bw_vis_bone, no_fingers, restore_global, db, export_visuals=export_visuals)
+        if export_visuals:
+            time.sleep(0.1)
     yield vis_blender(
         reset_to_rest,
         no_fingers,
@@ -1213,6 +1233,8 @@ def _pipeline(
         restore_global,
         db,
         export_visuals=export_visuals,
+        rig_cache_path=rig_cache_path,
+        rig_cache_hit=rig_cache_hit,
     )
     if export_visuals:
         time.sleep(0.1)

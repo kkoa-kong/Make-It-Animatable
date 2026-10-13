@@ -26,6 +26,7 @@ from api_artifacts import describe_result, has_preview
 from api_input import input_payload, save_fbx, save_glb
 from api_jobs import JobStore
 from api_mesh_input import prepare_mesh
+from api_rig_cache import RigCache, fingerprint_engine
 
 from api_url_fetch import DownloadError, DownloadUnavailable, download_url
 
@@ -46,6 +47,7 @@ HF_HOME = os.getenv("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 HY3DGEN_MODELS = Path(os.getenv("HY3DGEN_MODELS", str(Path.home() / ".cache" / "hy3dgen")))
 JOBS_DIR = Path(os.getenv("MIA_JOBS_DIR", str(ROOT / ".cache" / "api-jobs")))
 ANIMATIONS_DIR = Path(os.getenv("MIA_ANIMATIONS_DIR", str(ROOT / "data" / "mixamo")))
+RIG_CACHE_DIR = Path(os.getenv("MIA_RIG_CACHE_DIR", str(ROOT / ".cache" / "rig-cache")))
 _ui_installed = False
 
 MESH_EXTENSIONS = frozenset({".glb", ".gltf", ".obj", ".stl", ".ply", ".fbx"})
@@ -120,6 +122,8 @@ _job_queue: queue.Queue[str | None] = queue.Queue()
 _stopping = threading.Event()
 _catalog = AnimationCatalog(ANIMATIONS_DIR, translation_path=ROOT / "web" / "motion-index.zh-CN.json")
 _catalog_error: str | None = None
+_rig_cache = RigCache(RIG_CACHE_DIR)
+_rig_engine_signature: str | None = None
 
 # The upstream computational stages return Gradio component updates keyed by
 # component instances. Give them inert keys; this API never builds or serves a UI.
@@ -171,12 +175,22 @@ def _configure_hunyuan_checkpoint() -> None:
 
 
 def _load_models() -> None:
-    global _status, _startup_error
+    global _status, _startup_error, _rig_engine_signature
     try:
         os.environ.setdefault("HF_HOME", HF_HOME)
         _configure_checkpoints()
         _configure_hunyuan_checkpoint()
         app_v2.init_models()
+        if _rig_engine_signature is None:
+            from util.blender_utils import bpy
+
+            _rig_engine_signature = fingerprint_engine(
+                ROOT,
+                ROOT / "output" / "best" / "v2",
+                HY3DGEN_MODELS / "tencent" / "Hunyuan3D-2.1" / "hunyuan3d-vae-v2-1",
+                Path(app_v2.TEMPLATE_PATH),
+                bpy.app.version_string,
+            )
     except Exception as exc:
         logger.exception("MIA v2 model initialization failed")
         with _status_lock:
@@ -190,9 +204,11 @@ def _load_models() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global _job_queue
+    global _job_queue, _rig_cache
     _job_queue = queue.Queue()
     _jobs.initialize()
+    _rig_cache = RigCache(RIG_CACHE_DIR)
+    _rig_cache.schedule_cleanup()
     global _catalog_error
     try:
         await asyncio.to_thread(_catalog.load)
@@ -212,6 +228,7 @@ async def lifespan(_: FastAPI):
         _job_queue.put(None)
         if worker.is_alive():
             await asyncio.to_thread(worker.join)
+        await asyncio.to_thread(_rig_cache.close)
 
 
 app = FastAPI(title="MIA v2 Worker", version="2.0.0", lifespan=lifespan)
@@ -406,56 +423,61 @@ def _run_pipeline(
     animation_path: Path | None,
     animation: dict | None = None,
 ) -> Path:
-    db = app_v2.DB()
-    try:
-        for _ in app_v2._pipeline(
-            input_path=str(input_path),
-            is_gs=False,
-            no_fingers=request.input_no_fingers,
-            rest_pose_type=request.input_rest_pose,
-            ignore_pose_parts=list(request.input_rest_parts),
-            input_normal=request.input_normal,
-            bw_fix=request.input_bw_fix,
-            restore_global=request.input_restore_global,
-            reset_to_rest=request.input_reset_to_rest,
-            animation_file=None if animation_path is None else str(animation_path),
-            retarget=request.input_retarget,
-            inplace=request.input_inplace,
-            db=db,
-            export_temp=True,
-            export_visuals=False,
-            output_format="glb",
-        ):
-            pass
-        if not db.anim_path or not Path(db.anim_path).is_file():
-            raise RuntimeError("MIA v2 pipeline did not produce an animatable GLB")
+    if _rig_engine_signature is None:
+        raise RuntimeError("MIA v2 rig-cache engine signature is not initialized")
+    with _rig_cache.lease(input_path, request.model_dump(mode="json"), _rig_engine_signature) as rig:
+        db = app_v2.DB()
+        try:
+            for _ in app_v2._pipeline(
+                input_path=str(input_path),
+                is_gs=False,
+                no_fingers=request.input_no_fingers,
+                rest_pose_type=request.input_rest_pose,
+                ignore_pose_parts=list(request.input_rest_parts),
+                input_normal=request.input_normal,
+                bw_fix=request.input_bw_fix,
+                restore_global=request.input_restore_global,
+                reset_to_rest=request.input_reset_to_rest,
+                animation_file=None if animation_path is None else str(animation_path),
+                retarget=request.input_retarget,
+                inplace=request.input_inplace,
+                db=db,
+                export_temp=True,
+                export_visuals=False,
+                output_format="glb",
+                rig_cache_path=str(rig.path),
+                rig_cache_hit=rig.hit,
+            ):
+                pass
+            if not db.anim_path or not Path(db.anim_path).is_file():
+                raise RuntimeError("MIA v2 pipeline did not produce an animatable GLB")
 
-        directory = input_path.parent
-        result_path = directory / "animatable.glb"
-        shutil.move(db.anim_path, result_path)
-        included = ["animatable.glb"]
-        if _ui_installed:
-            included.append("animatable_preview.glb")
-        included.append("manifest.json")
-        (directory / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "model": MODEL_NAME,
-                    "options": request.model_dump(mode="json", exclude={"input_url", "input_animation_url"}),
-                    "animation": animation,
-                    "artifacts": included,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        return result_path
-    finally:
-        output_dir = db.output_dir
-        app_v2.clear(db)
-        if output_dir:
-            shutil.rmtree(output_dir, ignore_errors=True)
+            directory = input_path.parent
+            result_path = directory / "animatable.glb"
+            shutil.move(db.anim_path, result_path)
+            included = ["animatable.glb"]
+            if _ui_installed:
+                included.append("animatable_preview.glb")
+            included.append("manifest.json")
+            (directory / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "model": MODEL_NAME,
+                        "options": request.model_dump(mode="json", exclude={"input_url", "input_animation_url"}),
+                        "animation": animation,
+                        "artifacts": included,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return result_path
+        finally:
+            output_dir = db.output_dir
+            app_v2.clear(db)
+            if output_dir:
+                shutil.rmtree(output_dir, ignore_errors=True)
 
 
 def _public_job(job: dict) -> dict:
@@ -575,6 +597,7 @@ async def generate(http_request: Request) -> dict:
                 raise HTTPException(status_code=422, detail="uploaded input_format must be glb")
             request.input_format = ".glb"
         animation = _animation_snapshot(request)
+        _rig_cache.schedule_cleanup()
         payload = request.model_dump(mode="json")
         payload["_animation"] = animation
         input_staging = None

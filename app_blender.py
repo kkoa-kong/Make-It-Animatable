@@ -33,7 +33,7 @@ def remove_fingers_from_data(data: np.ndarray, bones_idx_dict: dict[str, int], i
     return data_new
 
 
-def main(args: argparse.Namespace):
+def _bind_character(args: argparse.Namespace):
     if isinstance(args.input_path, str):
         data = np.load(args.input_path, allow_pickle=True)
     else:
@@ -146,6 +146,71 @@ def main(args: argparse.Namespace):
                     export_rest_position_armature=False,
                     # export_yup=False,
                 )
+    return mesh_obj, armature_obj, gs, scaling, bw, bones_idx_dict
+
+
+def _save_rig_cache(filepath: str):
+    # Keep the predicted pose (or the already-applied rest pose), not template
+    # actions, NLA tracks, or drivers. Clearing animation does not reset bones.
+    for obj in bpy.data.objects:
+        obj.animation_data_clear()
+        if obj.data is not None:
+            obj.data.animation_data_clear()
+            shape_keys = getattr(obj.data, "shape_keys", None)
+            if shape_keys is not None:
+                shape_keys.animation_data_clear()
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action, do_unlink=True)
+    blender_utils.update()
+
+    # Imported GLB textures must survive removal of the job and import files.
+    bpy.ops.file.pack_all()
+    for image in bpy.data.images:
+        if image.packed_file or image.packed_files:
+            image.filepath_raw = "//textures/" + (os.path.basename(image.filepath) or image.name)
+        elif image.source in {"FILE", "TILED"} and image.filepath:
+            raise RuntimeError(f"Cannot cache unpacked image: {image.name}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+    filepaths = bpy.context.preferences.filepaths
+    save_version = filepaths.save_version
+    try:
+        filepaths.save_version = 0
+        # Saving a copy leaves Blender's current file separate from the cache.
+        bpy.ops.wm.save_as_mainfile(
+            filepath=os.path.abspath(filepath), check_existing=False,
+            copy=True, relative_remap=False,
+        )
+    finally:
+        filepaths.save_version = save_version
+
+
+def main(args: argparse.Namespace):
+    rig_cache_path = getattr(args, "rig_cache_path", None)
+    rig_cache_hit = getattr(args, "rig_cache_hit", False)
+    if rig_cache_hit and not rig_cache_path:
+        raise ValueError("A cache hit requires rig_cache_path")
+    if rig_cache_path and os.path.abspath(args.output_path) == os.path.abspath(rig_cache_path):
+        raise ValueError("The exported result must not overwrite the base rig cache")
+
+    with HiddenPrints(suppress_err=True):
+        if rig_cache_hit:
+            bpy.ops.wm.open_mainfile(filepath=os.path.abspath(rig_cache_path), use_scripts=False)
+            meshes = blender_utils.get_all_mesh_obj()
+            armatures = blender_utils.get_all_armature_obj()
+            if len(meshes) != 1 or len(armatures) != 1:
+                raise ValueError("Cached rig must contain one character mesh and armature")
+            mesh_obj, armature_obj = meshes[0], armatures[0]
+            if not any(mod.type == "ARMATURE" and mod.object == armature_obj for mod in mesh_obj.modifiers):
+                raise ValueError("Cached character mesh is not bound to its armature")
+            # The base already contains the selected pose/rest transformation.
+            # Do not reset it again or import/bind any mesh on the hit path.
+            gs, scaling, bw, bones_idx_dict = None, 1.0, None, None
+        else:
+            mesh_obj, armature_obj, gs, scaling, bw, bones_idx_dict = _bind_character(args)
+            if rig_cache_path:
+                _save_rig_cache(rig_cache_path)
+
         if args.animation_path:
             blender_utils.load_mixamo_anim(
                 [armature_obj, mesh_obj], args.animation_path, do_retarget=args.retarget, inplace=args.inplace
