@@ -206,6 +206,10 @@ docker run --rm --gpus '"device=4"' -p 8081:8081 \
 ```
 Container deployment is API-only by default (`MIA_UI=0`): do not pass `--ui` or `MIA_UI=1` in the deployment command. The separately documented host UI is a development option, not the container startup mode.
 
+The supported process entry point is `python api_server.py`, not `uvicorn api_server:app`: model initialization and Blender operators must run on the process main thread. SIGTERM stops new submissions, waits for the active task while continuing to service its Blender export queue, and leaves queued jobs for the next startup. After the HTTP/job threads finish, the main thread disables Blender add-ons and unregisters startup scripts in reverse registration order before Python finalization. This prevents bpy 4.3's Python-backed UI class destructors from accessing an already finalized interpreter. Script cleanup uses bpy 4.3's internal module registry; revalidate startup, animation generation and SIGTERM shutdown when upgrading bpy.
+
+Shutdown verification must include a real animation/retargeting request, not only an idle worker: idle shutdown alone does not exercise registered Blender UI classes. Blender may still print `Not freed memory blocks` during native teardown; that diagnostic is not suppressed and must not be confused with a clean memory-leak audit. Require exit code 0, valid generated FBX/GLB artifacts and released GPU allocations.
+
 
 The Docker example assumes ordinary public DNS and outbound connectivity. If the container also uses a fake-IP gateway, configure its DNS and trusted-egress hostnames explicitly rather than disabling IP checks.
 

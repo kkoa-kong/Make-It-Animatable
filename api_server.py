@@ -202,7 +202,6 @@ async def lifespan(_: FastAPI):
     global _job_queue
     _job_queue = queue.Queue()
     _jobs.initialize()
-    _stopping.clear()
     global _catalog_error
     try:
         await asyncio.to_thread(_catalog.load)
@@ -210,7 +209,6 @@ async def lifespan(_: FastAPI):
     except (OSError, ValueError) as exc:
         _catalog_error = str(exc)
         logger.error("Local animation library unavailable: %s", exc)
-    await asyncio.to_thread(_load_models)
     worker = threading.Thread(target=_process_jobs, name="mia-v2-jobs")
     if _status == "ready":
         worker.start()
@@ -223,8 +221,6 @@ async def lifespan(_: FastAPI):
         _job_queue.put(None)
         if worker.is_alive():
             await asyncio.to_thread(worker.join)
-        if _status == "ready":
-            app_v2.clear()
 
 
 app = FastAPI(title="MIA v2 Worker", version="2.0.0", lifespan=lifespan)
@@ -674,10 +670,27 @@ def _serve_http() -> None:
     config = uvicorn.Config(app, host="0.0.0.0", port=API_PORT, log_level=os.getenv("LOG_LEVEL", "info"))
     server = uvicorn.Server(config)
     _server_holder["server"] = server
+    server.should_exit = _stopping.is_set()
     server.run()
 
 
 _server_holder: dict[str, uvicorn.Server] = {}
+
+
+def _unload_blender_scripts() -> None:
+    import addon_utils
+    import bpy
+    import sys
+
+    # bpy 4.3 frees Python-backed UI classes during native static destruction,
+    # after CPython has finalized. Unregister them while Python is still alive.
+    addon_utils.disable_all()
+    modules = [sys.modules[name] for name in reversed(bpy.utils._registered_module_names)]
+    bpy.utils._registered_module_names.clear()
+    for module in modules:
+        unregister = getattr(module, "unregister", None)
+        if unregister is not None:
+            unregister()
 
 
 def main() -> None:
@@ -687,10 +700,10 @@ def main() -> None:
     if cli.ui:
         enable_ui()
     server_thread = threading.Thread(target=_serve_http, name="mia-v2-http", daemon=True)
-    server_thread.start()
-    logger.info("MIA v2 API starting on 0.0.0.0:%d", API_PORT)
+    _stopping.clear()
 
     def stop_server(_signum=None, _frame=None) -> None:
+        _stopping.set()
         server = _server_holder.get("server")
         if server is not None:
             server.should_exit = True
@@ -698,10 +711,18 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop_server)
     signal.signal(signal.SIGINT, stop_server)
 
-    # bpy operators in the upstream implementation run on the main thread.
-    import app_blender
-
     try:
+        # Model initialization loads native dependencies that cannot safely
+        # initialize in the HTTP event loop's executor thread.
+        _load_models()
+        if _stopping.is_set():
+            return
+
+        # bpy operators in the upstream implementation run on the main thread.
+        import app_blender
+
+        server_thread.start()
+        logger.info("MIA v2 API starting on 0.0.0.0:%d", API_PORT)
         while server_thread.is_alive():
             try:
                 task = app_v2.blender_task_queue.get(timeout=0.5)
@@ -719,7 +740,11 @@ def main() -> None:
                 event.set()
     finally:
         stop_server()
-        server_thread.join()
+        if server_thread.ident is not None:
+            server_thread.join()
+        _unload_blender_scripts()
+        if _status == "ready":
+            app_v2.clear()
 
 
 if os.getenv("MIA_UI", "0") == "1":
