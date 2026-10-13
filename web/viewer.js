@@ -102,10 +102,10 @@ export class MotionViewer {
     this._controls.target.set(0, 0.5, 0);
 
     // Lights
-    const hemi = new THREE.HemisphereLight(0xe8eef7, 0x2a2f3a, 0.55);
+    const hemi = new THREE.HemisphereLight(0xb7d5ff, 0x17233c, 0.85);
     this._scene.add(hemi);
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.1);
+    const key = new THREE.DirectionalLight(0xe5efff, 2.1);
     key.position.set(3, 5, 4);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
@@ -116,32 +116,42 @@ export class MotionViewer {
     key.shadow.camera.top = 5;
     key.shadow.camera.bottom = -5;
     key.shadow.bias = -0.0005;
-    this._scene.add(key);
+    this._scene.add(key, key.target);
     this._keyLight = key;
 
-    const fill = new THREE.DirectionalLight(0x9fb4d9, 0.35);
+    const fill = new THREE.DirectionalLight(0x759fff, 0.8);
     fill.position.set(-4, 2, -2);
     this._scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(0xffe79a, 0.25);
-    rim.position.set(0, 3, -5);
+    const rim = new THREE.DirectionalLight(0x4488ff, 1.15);
+    rim.position.set(1, 3, -5);
     this._scene.add(rim);
 
-    // Ground / plinth grid
-    const grid = new THREE.GridHelper(10, 40, 0x4a5569, 0x323949);
+    // Blue floor lines remain visible against the transparent midnight stage.
+    const grid = new THREE.GridHelper(10, 40, 0x4674ac, 0x284769);
     grid.position.y = 0;
     grid.material.transparent = true;
-    grid.material.opacity = 0.35;
+    grid.material.opacity = 0.52;
+    grid.material.depthWrite = false;
+    grid.material.toneMapped = false;
     this._scene.add(grid);
     this._grid = grid;
 
-    // Subtle ground plane for shadow reception
+    // A translucent navy surface gives shadows contrast without hiding the CSS stage.
     const groundGeo = new THREE.PlaneGeometry(20, 20);
-    const groundMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x14233c,
+      roughness: 1,
+      metalness: 0,
+      transparent: true,
+      opacity: 0.68,
+      depthWrite: false,
+    });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.001;
     ground.receiveShadow = true;
+    ground.renderOrder = -1;
     this._scene.add(ground);
     this._ground = ground;
 
@@ -530,18 +540,36 @@ export class MotionViewer {
     this._camera.far = maxDim * 100;
     this._camera.updateProjectionMatrix();
 
-    // Position camera to frame the object nicely
-    const fov = this._camera.fov * (Math.PI / 180);
-    const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.8;
+    // Fit the projected box in both axes, including a tall or narrow stage.
+    const halfFov = THREE.MathUtils.degToRad(this._camera.fov) / 2;
+    const tanVertical = Math.tan(halfFov);
+    const tanHorizontal = tanVertical * this._camera.aspect;
+    const dir = new THREE.Vector3(0.24, 0.22, 1).normalize();
+    const right = new THREE.Vector3().crossVectors(this._camera.up, dir).normalize();
+    const up = new THREE.Vector3().crossVectors(dir, right);
+    let distance = maxDim;
+    for (let corner = 0; corner < 8; corner++) {
+      const x = size.x * (corner & 1 ? 0.5 : -0.5);
+      const y = size.y * (corner & 2 ? 0.5 : -0.5);
+      const z = size.z * (corner & 4 ? 0.5 : -0.5);
+      const depth = x * dir.x + y * dir.y + z * dir.z;
+      const horizontal = Math.abs(x * right.x + y * right.y + z * right.z);
+      const vertical = Math.abs(x * up.x + y * up.y + z * up.z);
+      distance = Math.max(distance, depth + 1.22 * horizontal / tanHorizontal,
+        depth + 1.22 * vertical / tanVertical);
+    }
 
-    const dir = new THREE.Vector3(0.5, 0.35, 1).normalize();
-    this._camera.position.copy(center).add(dir.multiplyScalar(distance));
+    this._camera.position.copy(center).addScaledVector(dir, distance);
     this._controls.target.copy(center);
     this._controls.update();
     this._controls.saveState();
 
     // Adjust light shadow camera
     if (this._keyLight) {
+      this._keyLight.position.set(center.x + maxDim * 1.8,
+        center.y + maxDim * 2.8, center.z + maxDim * 2);
+      this._keyLight.target.position.copy(center);
+      this._keyLight.shadow.normalBias = maxDim * 0.004;
       this._keyLight.shadow.camera.left = -maxDim * 1.2;
       this._keyLight.shadow.camera.right = maxDim * 1.2;
       this._keyLight.shadow.camera.top = maxDim * 1.2;
@@ -551,16 +579,18 @@ export class MotionViewer {
       this._keyLight.shadow.camera.updateProjectionMatrix();
     }
 
-    // Scale grid to match scene
+    // Center the floor under translated models, with a scale-relative gap to
+    // prevent coplanar flicker. Both axes of the rotated plane must scale alike.
+    const floorY = box.min.y - maxDim * 0.003;
     if (this._grid) {
-      const gridSize = Math.max(maxDim * 2, 2);
+      const gridSize = maxDim * 5;
       this._grid.scale.set(gridSize / 10, 1, gridSize / 10);
-      this._grid.position.y = box.min.y;
+      this._grid.position.set(center.x, floorY, center.z);
     }
     if (this._ground) {
-      const groundSize = Math.max(maxDim * 4, 4);
-      this._ground.scale.set(groundSize / 20, 1, groundSize / 20);
-      this._ground.position.y = box.min.y - 0.001;
+      const groundSize = maxDim * 7;
+      this._ground.scale.setScalar(groundSize / 20);
+      this._ground.position.set(center.x, floorY - maxDim * 0.001, center.z);
     }
   }
 

@@ -178,12 +178,16 @@ function renderCards(items) {
     button.type = 'button';
     button.setAttribute('aria-pressed', String(selected));
     button.setAttribute('aria-label', `点击生成 ${motionName(record)}，动作 ID ${record.motion_id}`);
+    button.title = `${record.description_zh || record.description || record.prompt || ''}\n${record.filename || ''}\nID ${record.motion_id}`;
     const top = makeElement('div', 'card-top');
     top.append(makeElement('span', 'card-category', record.category_label || '未分类'), makeElement('span', 'card-kind', 'FBX MOTION'));
     const title = makeElement('h3', 'card-title', motionName(record));
     const description = makeElement('p', 'card-description', record.description_zh || record.description || record.prompt || '此素材没有描述。');
     description.title = description.textContent;
     const meta = makeElement('div', 'card-meta');
+    const duration = makeElement('span', 'card-duration');
+    duration.hidden = true;
+    meta.append(duration);
     meta.append(makeElement('span', '', `${record.frames ?? '未知'} 帧`), makeElement('span', 'card-check', selected ? '当前动作 · 点击生成 ↗' : '点击生成 ↗'));
     const lead = makeElement('div', 'card-lead');
     const body = makeElement('div', 'card-body');
@@ -209,6 +213,12 @@ function renderCards(items) {
         if (!video.src) { video.src = video.dataset.src; video.load(); }
         video.play().catch(() => { mediaStatus.hidden = false; mediaStatus.textContent = '点击「播放短视频」预览'; });
       };
+      video.addEventListener('loadedmetadata', () => {
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          duration.textContent = `${video.duration.toFixed(1)}s`;
+          duration.hidden = false;
+        }
+      });
       video.addEventListener('loadeddata', () => { mediaStatus.hidden = true; });
       video.addEventListener('error', () => {
         mediaStatus.hidden = false;
@@ -493,6 +503,23 @@ function uploadRequest(form) {
     xhr.send(form);
   });
 }
+function bindingOptions() {
+  const restPose = $('rest-pose').value;
+  return {
+    animation_id: state.selection.motion_id,
+    input_inplace: $('inplace').checked,
+    input_no_fingers: $('no-fingers').checked,
+    input_rest_pose: restPose,
+    input_rest_parts: restPose === 'No' ? [] : [...document.querySelectorAll('[name="rest-parts"]:checked')].map((input) => input.value),
+    input_normal: true,
+    input_bw_fix: $('bw-fix').checked,
+    input_bw_vis_bone: $('bw-vis-bone').value,
+    input_restore_global: $('restore-global').checked,
+    input_reset_to_rest: $('reset-to-rest').checked,
+    input_retarget: $('retarget').checked,
+  };
+}
+
 async function generate() {
   if ($('generate').disabled) return;
   state.submitting = true;
@@ -509,7 +536,7 @@ async function generate() {
   updateRunState();
   const form = new FormData();
   form.append('input_file', state.file, state.file.name);
-  form.append('options', JSON.stringify({ animation_id: state.selection.motion_id, input_retarget: true, input_inplace: $('inplace').checked, input_reset_to_rest: true, input_no_fingers: $('no-fingers').checked }));
+  form.append('options', JSON.stringify(bindingOptions()));
   try {
     const job = await uploadRequest(form);
     state.job = job;
@@ -625,6 +652,17 @@ function reconnectLastJob() {
   pollJob();
 }
 
+const visualizationBones = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head'];
+for (const side of ['Left', 'Right']) {
+  visualizationBones.push(...['Shoulder', 'Arm', 'ForeArm', 'Hand'].map((part) => side + part));
+  for (const finger of ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']) {
+    for (let joint = 1; joint <= 3; joint++) visualizationBones.push(`${side}Hand${finger}${joint}`);
+  }
+  visualizationBones.push(...['UpLeg', 'Leg', 'Foot', 'ToeBase'].map((part) => side + part));
+}
+$('bw-vis-bone').replaceChildren(...visualizationBones.map((name) => new Option(name, name, name === 'LeftArm', name === 'LeftArm')));
+$('advanced-form').addEventListener('submit', (event) => event.preventDefault());
+
 try {
   viewer = new MotionViewer($('viewport'), {
     onChange: updateViewer,
@@ -687,6 +725,38 @@ $('timeline').addEventListener('input', (event) => viewer?.seek(Number(event.tar
 $('timeline').addEventListener('change', () => { scrubbing = false; });
 window.addEventListener('pointerup', () => { scrubbing = false; });
 window.addEventListener('pointercancel', () => { scrubbing = false; });
+$('library-grid').addEventListener('click', () => setLibraryLayout(false));
+$('library-list').addEventListener('click', () => setLibraryLayout(true));
+function setLibraryLayout(list) {
+  $('animation-grid').classList.toggle('is-list', list);
+  $('library-grid').setAttribute('aria-pressed', String(!list));
+  $('library-list').setAttribute('aria-pressed', String(list));
+}
+$('nav-models').addEventListener('click', () => {
+  $('model-library').open = true;
+  $('model-library').scrollIntoView({ block: 'nearest', behavior: reducedMotion.matches ? 'instant' : 'smooth' });
+  $('model-library').querySelector('summary').focus({ preventScroll: true });
+});
+$('focus-search').addEventListener('click', () => $('animation-search').focus());
+window.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    $('animation-search').focus();
+  }
+});
+$('fullscreen-view').addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await $('viewer-panel').requestFullscreen();
+  } catch (error) {
+    $('viewer-message').textContent = `无法进入全屏：${error.message || error}`;
+  }
+});
+document.addEventListener('fullscreenchange', () => {
+  const fullscreen = document.fullscreenElement === $('viewer-panel');
+  $('fullscreen-view').setAttribute('aria-pressed', String(fullscreen));
+  $('fullscreen-view').setAttribute('aria-label', fullscreen ? '退出 3D 视图全屏' : '全屏显示 3D 视图');
+});
 window.addEventListener('pagehide', (event) => {
   if (event.persisted) return;
   clearTimeout(state.pollTimer);

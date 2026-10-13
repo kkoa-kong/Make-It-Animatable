@@ -163,9 +163,13 @@ Open `http://agent-models-api.singularity-ai.com:8081/` through your existing ac
 
 The development service is already running; access its URL directly. Stop `mia-v2-api.service` before using a foreground command so two workers do not compete for the same port and job directory.
 
-The desktop studio uses a single-screen three-column layout: motion categories/search and video cards on the left, the main 3D viewport in the center, model upload/options/history on the right. Both sidebars scroll independently; the header stays compact. There is no mobile-specific layout or pane switching. Choose a GLB model, adjust parameters, then click an animation card to submit immediately. Without a model, clicking only records the motion; selecting a model later does not submit automatically. Double-clicks and clicks during upload/queued/running tasks do not append jobs. The separate generation button is for retrying or applying changed parameters. Actual upload progress and task states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
+The studio uses a midnight-blue three-column layout: motion categories/search and two-column video cards on the left, the main 3D viewport in the center, model upload/options/history on the right. Both sidebars scroll independently; narrower screens reflow the panels. Grid/list controls switch card presentation, Cmd/Ctrl+K focuses motion search, and the “My models” header opens the browser cache section. The stage supports fullscreen and displays real model statistics over a blue-lit grid floor. The supplied reference artwork is cropped/compressed under `web/art/`; the interface remains real HTML and Three.js rather than a screenshot. Choose a GLB model, adjust parameters, then click an animation card to submit immediately. Without a model, clicking only records the motion; selecting a model later does not submit automatically. Double-clicks and clicks during upload/queued/running tasks do not append jobs. The separate generation button is for retrying or applying changed parameters. Actual upload progress and task states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
 
-Cards load video metadata only when visible. Hover or keyboard focus plays the source MP4; leaving pauses it. Reduced-motion users get an explicit play/pause button instead of automatic playback. The preview buttons never submit a job or replace the central model view. Source videos demonstrate the upstream character, not your generated character; the detailed FBX skeleton preview remains available. Missing/broken videos are explicit and do not prevent generation.
+The binding panel's collapsed advanced form exposes the existing API options: rest-pose adjustment (`No`, `T-pose`, `A-pose`, `大-pose`), ignored body parts, skinning-weight correction, all 52 supported weight-visualization bones, restoration of global transforms, reset to predicted rest pose, and animation retargeting. Mesh normals are shown as fixed on because the API accepts only `true`. Ignored parts are sent as an empty list when rest-pose adjustment is `No`. Values apply to the next generation, whether submitted by an animation card or the generation button; changing controls does not modify an existing job. “Restore advanced defaults” resets only the advanced form, leaving basic in-place/no-fingers choices unchanged. Refreshing the page restores parameter defaults.
+
+The header and modern browser favicon share `web/art/brand-mark.svg`, a transparent gradient-filled vector mark with a continuous silhouette and no bitmap scaling seams. `web/favicon.ico`, linked through `/ui/favicon.ico` as a compatibility fallback, contains transparent 16/24/32/48/64/128/256-pixel variants rendered from that SVG. Interface line icons remain inline SVGs with transparent canvases; button and panel backgrounds are intentional CSS styling.
+
+Cards load video metadata only when visible and show duration from the actual preview file. Preview videos use a cool dark-background display filter; the original server files and downloads are unchanged. Hover or keyboard focus plays the source MP4; leaving pauses it. Reduced-motion users get an explicit play/pause button instead of automatic playback. Short-video controls never submit a job or replace the central model view; the detailed FBX skeleton preview loads the real source motion in the center. Source videos demonstrate the upstream character, not your generated character. Missing/broken videos are explicit and do not prevent generation.
 
 Uploaded GLB files are automatically stored as actual blobs in browser IndexedDB, not just filenames or remote URLs. The right-hand “My models” list remains after reload; selecting a saved model reloads that GLB as the current generation input without creating another history entry. Delete controls remove only the local cached copy. Storage is scoped to the browser and origin (including port); clearing site data or browser eviction removes it. If saving fails (for example, quota or disabled storage), an explicit error is shown while the current upload remains usable. Files are sent to the API only when generation is submitted.
 
@@ -174,6 +178,30 @@ Successful tasks expose the animated GLB, animated skeleton/joint overlays, pred
 All browser dependencies are served locally under `/ui/`: pinned Three.js 0.180.0 and only required loader/control modules, fetched from the HTTPS npmmirror registry with npm SHA-512 integrity validation, plus licensed Noto Sans CJK SC UI/Latin font subsets. No Node build step or runtime external CDN is needed. Licenses and source/checksum manifests are included. If UI literals change, the optional font rebuild helper is `.venv/bin/python prepare_ui_fonts.py`, using the installed Ubuntu `fonts-noto-cjk` source and existing `fontTools`/Brotli environment.
 
 The optional demo loads the real `data/examples/ninja.glb` when installed; it is labelled as an ungenerated example and is not submitted until explicitly selected. A deployment without example assets can still upload its own models. Frontend styling does not change raw motion descriptions: category labels are deterministic keyword groups (`keyword-v1`), not official Mixamo labels or LLM classification.
+
+#### Local frontend preview with the remote API
+
+Use Node.js 20.19+ (20.x) or 22.12+ and install the development dependencies:
+
+```bash
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/`. The development server serves local `web/` files, updates CSS live and reloads the page for HTML/JavaScript changes. It preserves `/ui/` asset paths and uses the vendored Three.js modules; production still needs no Node runtime or build step. The server binds only to localhost and fails rather than silently changing ports if 5173 is occupied.
+
+By default, API requests go to `http://agent-models-api.singularity-ai.com:8081`. Override the target for another deployment or an SSH tunnel:
+
+```bash
+MIA_API_TARGET=http://127.0.0.1:18000 npm run dev
+# In a separate terminal, if the remote API is not directly reachable:
+ssh -N -L 18000:127.0.0.1:8081 USER@SERVER
+```
+
+The proxy forwards `/health`, `/info`, `/animations`, `/generate`, `/jobs`, API documentation and `/ui/demo`, including uploads, video byte ranges and generated artifact downloads. Other `/ui/` resources stay local. This avoids browser CORS changes; existing frontend same-origin URL checks remain enabled. Deployment-specific login or gateway credentials are not configured automatically.
+
+Generation uses the real remote GPU and persists jobs on that server; local preview is not a sandbox. Preview verification can use health, catalog, videos and the demo without submitting a job. Browser model caches and last-job state are separate from the deployed UI because they are scoped to the local origin. Stop the development server with Ctrl-C; changing `MIA_API_TARGET` requires restarting it.
+
 
 #### Temporary host service
 

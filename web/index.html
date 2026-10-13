@@ -4,58 +4,100 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#202127">
+  <meta name="theme-color" content="#080e1c">
   <title>Motion Studio · 动画工作台</title>
+  <link rel="icon" type="image/x-icon" href="/ui/favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="/ui/art/brand-mark.svg" sizes="any">
   <link rel="stylesheet" href="/ui/styles.css">
   <script type="importmap">{"imports":{"three":"/ui/vendor/three/build/three.module.min.js","three/addons/":"/ui/vendor/three/examples/jsm/"}}</script>
   <script type="module" src="/ui/app.js"></script>
 </head>
 <body>
+  <svg class="svg-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></symbol>
+    <symbol id="icon-cube" viewBox="0 0 24 24"><path d="m12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5"/></symbol>
+    <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/></symbol>
+    <symbol id="icon-sliders" viewBox="0 0 24 24"><path d="M4 7h4m4 0h8M4 17h9m4 0h3"/><circle cx="10" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></symbol>
+    <symbol id="icon-guide" viewBox="0 0 24 24"><path d="M12 5v15M3 4h4a5 5 0 0 1 5 2 5 5 0 0 1 5-2h4v15h-4a7 7 0 0 0-5 2 7 7 0 0 0-5-2H3z"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M10 4H4v16h16v-6"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-2l2 2M4 17l2 2a7 7 0 0 0 12-2"/></symbol>
+    <symbol id="icon-fullscreen" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="icon-reset" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  </defs></svg>
   <a class="skip-link" href="#library">跳转到动作库</a>
   <div class="studio-shell">
     <header class="site-header">
-      <a class="brand" href="#workspace" aria-label="Motion Studio 工作台"><span class="brand-mark" aria-hidden="true">m.</span><span>Motion Studio</span></a>
-      <div class="header-actions"><div class="service-indicator" id="service-health" role="status"><span class="status-dot"></span><span id="service-label">正在连接服务</span><button class="icon-button" id="refresh-health" type="button" aria-label="刷新服务状态">↻</button></div><a class="api-link" href="/docs" target="_blank" rel="noopener">API ↗</a></div>
+      <a class="brand" href="#workspace" aria-label="Motion Studio 工作台"><img class="brand-mark" src="/ui/art/brand-mark.svg" alt="" width="48" height="30"><span>Motion<span class="brand-light"> Studio</span></span></a>
+      <nav class="main-nav" aria-label="工作台导航">
+        <button class="nav-link is-active" id="nav-library" type="button" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#icon-grid"/></svg>动画库</button>
+        <button class="nav-link" id="nav-models" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-cube"/></svg>我的模型</button>
+        <a class="nav-link" href="#usage-guide"><svg class="icon" aria-hidden="true"><use href="#icon-guide"/></svg>使用引导</a>
+      </nav>
+      <div class="header-actions">
+        <button class="header-search" id="focus-search" type="button" aria-label="搜索动作，快捷键 Control 或 Command 加 K"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><span>搜索动作…</span><kbd>⌘ K</kbd></button>
+        <div class="service-indicator" id="service-health" role="status"><span class="status-dot"></span><span id="service-label">正在连接服务</span><button class="icon-button" id="refresh-health" type="button" aria-label="刷新服务状态"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg></button></div>
+        <a class="api-link" href="/docs" target="_blank" rel="noopener">API 文档<svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
+      </div>
     </header>
     <main class="workspace" id="workspace">
       <section class="library library-panel" id="library" aria-labelledby="library-title">
-          <div class="panel-heading"><h2 id="library-title">动画库</h2><span class="library-count"><strong id="library-count">—</strong> 个动作</span></div>
-          <div class="categories" id="categories" role="group" aria-label="按关键词分类筛选"><button class="category-button" type="button" data-category="" aria-pressed="true">全部</button></div>
-          <label class="search-box"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="animation-search" type="search" placeholder="搜索中文 / 英文名称或描述" aria-label="搜索中英文动作名称或描述" autocomplete="off"></label>
-          <div class="library-status"><p id="library-status" role="status" aria-live="polite">正在读取动作库…</p><button class="text-button" id="retry-library" type="button" hidden>重新加载</button></div>
-          <div class="animation-grid" id="animation-grid" aria-busy="true"></div>
-          <div class="pagination"><span id="page-summary">—</span><div><button class="secondary-button" id="previous-page" type="button" disabled aria-label="上一页动作">←</button><button class="secondary-button" id="next-page" type="button" disabled aria-label="下一页动作">→</button></div></div>
-          <p class="metadata-note">悬停或点「播放短视频」只预览；选好模型后，点击卡片直接生成。视频为源动作演示，不是你的角色结果。中文为展示译文，分类来自英文关键词。</p>
-        </section>
+        <div class="panel-heading library-heading"><h2 id="library-title">动画库</h2><span class="library-count"><strong id="library-count">—</strong> 个动作</span></div>
+        <p class="library-subtitle">发现动作，为你的角色注入生命。</p>
+        <label class="search-box"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><input id="animation-search" type="search" placeholder="搜索动作名称、关键词…" aria-label="搜索中英文动作名称或描述" autocomplete="off"></label>
+        <div class="categories" id="categories" role="group" aria-label="按关键词分类筛选"><button class="category-button" type="button" data-category="" aria-pressed="true">全部</button></div>
+        <div class="library-toolbar"><div class="library-status"><p id="library-status" role="status" aria-live="polite">正在读取动作库…</p><button class="text-button" id="retry-library" type="button" hidden>重新加载</button></div><div class="layout-toggle" role="group" aria-label="动画库显示方式"><button class="icon-button" id="library-grid" type="button" aria-label="网格视图" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="#icon-grid"/></svg></button><button class="icon-button" id="library-list" type="button" aria-label="列表视图" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-list"/></svg></button></div></div>
+        <div class="animation-grid" id="animation-grid" aria-busy="true"></div>
+        <div class="pagination"><span id="page-summary">—</span><div><button class="secondary-button" id="previous-page" type="button" disabled aria-label="上一页动作"><svg class="icon arrow-left" aria-hidden="true"><use href="#icon-arrow"/></svg></button><button class="secondary-button" id="next-page" type="button" disabled aria-label="下一页动作"><svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></button></div></div>
+        <p class="metadata-note">悬停或点「播放短视频」只预览；选好模型后，点击卡片直接生成。视频为源动作演示，不是你的角色结果。中文为展示译文，分类来自英文关键词。</p>
+      </section>
       <section class="preview-panel" id="viewer-panel" aria-label="3D 模型预览">
-        <div class="preview-heading"><h1>3D 视图</h1><span class="preview-badge" id="preview-label">示例角色 · 未生成</span></div>
-        <div class="viewport-wrap"><div id="viewport" aria-label="可交互 3D 预览，拖动旋转，滚轮缩放"></div><div class="viewport-empty" id="viewport-empty"><span class="empty-monogram" aria-hidden="true">m.</span><p id="viewport-empty-text">正在加载示例角色</p></div><div class="viewport-corner" aria-hidden="true">X / Y / Z</div><button class="reset-view icon-button" id="reset-view" type="button" aria-label="重置 3D 视角"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></svg></button></div>
+        <div class="preview-heading"><h1><svg class="icon" aria-hidden="true"><use href="#icon-cube"/></svg>3D 视图</h1><span class="preview-badge" id="preview-label">示例角色 · 未生成</span><button class="icon-button" id="fullscreen-view" type="button" aria-label="全屏预览"><svg class="icon" aria-hidden="true"><use href="#icon-fullscreen"/></svg></button></div>
+        <div class="viewport-wrap"><div id="viewport" aria-label="可交互 3D 预览，拖动旋转，滚轮缩放"></div><div class="viewport-empty" id="viewport-empty"><svg class="empty-monogram icon" aria-hidden="true"><use href="#icon-cube"/></svg><p id="viewport-empty-text">正在加载示例角色</p></div><span class="viewer-stats" id="viewer-stats">实时预览</span><div class="viewport-corner" aria-hidden="true"><span class="axis-y">Y</span><span class="axis-z">Z</span><span class="axis-x">X</span></div><span class="viewport-help">拖动旋转 · 滚轮缩放</span><button class="reset-view icon-button" id="reset-view" type="button" aria-label="重置 3D 视角"><svg class="icon" aria-hidden="true"><use href="#icon-reset"/></svg></button></div>
         <div class="viewer-message" id="viewer-message" role="status"></div>
-        <div class="view-toolbar"><div class="segmented-control" role="group" aria-label="显示方式"><button type="button" data-mode="model" aria-pressed="true">模型</button><button type="button" data-mode="skeleton" aria-pressed="false">骨架</button><button type="button" data-mode="joints" aria-pressed="false">关节</button></div><span class="viewer-stats" id="viewer-stats">实时预览</span></div>
-        <div class="playback-bar"><button class="play-button" id="play-toggle" type="button" aria-label="播放动画" disabled>播放</button><span class="time-readout" id="time-current">0:00</span><input id="timeline" type="range" min="0" max="0" step="0.01" value="0" disabled aria-label="动画时间轴"><span class="time-readout" id="time-total">0:00</span><label class="speed-control"><span class="sr-only">播放速度</span><select id="speed" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label></div>
+        <div class="view-toolbar"><div class="segmented-control" role="group" aria-label="显示方式"><button type="button" data-mode="model" aria-pressed="true">模型</button><button type="button" data-mode="skeleton" aria-pressed="false">骨架</button><button type="button" data-mode="joints" aria-pressed="false">关节</button></div><span class="view-toolbar-label">显示模式</span></div>
+        <div class="playback-bar"><div class="play-control"><svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg><button class="play-button" id="play-toggle" type="button" aria-label="播放动画" disabled>播放</button></div><span class="time-readout" id="time-current">0:00</span><input id="timeline" type="range" min="0" max="0" step="0.01" value="0" disabled aria-label="动画时间轴"><span class="time-readout" id="time-total">0:00</span><label class="speed-control"><span class="sr-only">播放速度</span><select id="speed" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label></div>
         <div class="preview-footnote"><span id="preview-note">示例仅用于预览，需明确选择作为输入。</span><button class="text-button" id="preview-demo" type="button">查看示例</button></div>
       </section>
       <aside class="controls-panel" id="controls-panel" aria-label="模型上传与绑定参数">
         <section class="panel-section" aria-labelledby="model-title">
-          <div class="panel-heading"><h2 id="model-title">角色模型</h2><span class="format-label">GLB</span></div>
-          <label class="dropzone" id="dropzone" for="model-file"><span class="upload-symbol" aria-hidden="true">↑</span><span class="upload-text"><strong id="file-name">拖放 GLB，或点击上传</strong><span id="file-detail">本地预览 · 单个 .glb 文件</span></span><input id="model-file" type="file" accept=".glb,model/gltf-binary" aria-label="上传 GLB 角色模型"></label>
+          <div class="panel-heading"><h2 id="model-title"><svg class="icon" aria-hidden="true"><use href="#icon-cube"/></svg>角色模型</h2><span class="format-label">GLB</span></div>
+          <label class="dropzone" id="dropzone" for="model-file"><svg class="upload-symbol icon" aria-hidden="true"><use href="#icon-upload"/></svg><span class="upload-text"><strong id="file-name">拖放 GLB，或点击上传</strong><span id="file-detail">本地预览 · 单个 .glb 文件</span></span><input id="model-file" type="file" accept=".glb,model/gltf-binary" aria-label="上传 GLB 角色模型"></label>
           <div class="upload-actions"><button class="text-button" id="use-demo" type="button">使用示例角色</button><button class="text-button" id="preview-upload" type="button" disabled>查看我的模型</button></div>
           <p class="inline-message" id="file-message" role="status"></p>
         </section>
         <section class="panel-section" aria-labelledby="parameter-title">
-          <div class="panel-heading"><h2 id="parameter-title">绑定参数</h2></div>
+          <div class="panel-heading"><h2 id="parameter-title"><svg class="icon" aria-hidden="true"><use href="#icon-sliders"/></svg>绑定参数</h2></div>
           <div class="run-options"><label><input id="inplace" type="checkbox" checked> 原地运动</label><label><input id="no-fingers" type="checkbox"> 不预测手指</label></div>
-          <div class="selected-motion" id="selected-motion"><div><strong id="selected-name">尚未选择动画</strong><span id="selected-detail">选好模型后，点击左侧动作直接生成。</span></div></div>
+          <details class="advanced-binding" id="advanced-binding">
+            <summary><span>高级参数配置</span><svg class="icon details-chevron" aria-hidden="true"><use href="#icon-chevron"/></svg></summary>
+            <form id="advanced-form" class="advanced-form">
+              <label class="parameter-field" for="rest-pose"><span>静止姿态调整</span><select id="rest-pose"><option value="No">不调整（默认）</option><option value="T-pose">T-pose</option><option value="A-pose">A-pose</option><option value="大-pose">大-pose</option></select></label>
+              <fieldset class="parameter-parts"><legend>姿态调整时忽略的部位</legend><div><label><input type="checkbox" name="rest-parts" value="Fingers"> 手指</label><label><input type="checkbox" name="rest-parts" value="Arms"> 手臂</label><label><input type="checkbox" name="rest-parts" value="Legs"> 腿部</label><label><input type="checkbox" name="rest-parts" value="Head"> 头部</label></div><p>仅在选择姿态调整时生效。</p></fieldset>
+              <label class="parameter-check"><input id="bw-fix" type="checkbox" checked><span>蒙皮权重修正<small>修正预测的蒙皮权重。</small></span></label>
+              <label class="parameter-field" for="bw-vis-bone"><span>权重可视化骨骼</span><select id="bw-vis-bone"><option value="LeftArm" selected>LeftArm</option></select><small>控制输出权重预览所展示的骨骼，不是绑定范围。</small></label>
+              <label class="parameter-check"><input id="restore-global" type="checkbox"><span>恢复模型全局变换<small>恢复输入模型的全局变换。</small></span></label>
+              <label class="parameter-check"><input id="reset-to-rest" type="checkbox" checked><span>重置到预测静止姿态</span></label>
+              <label class="parameter-check"><input id="retarget" type="checkbox" checked><span>动画重定向<small>将所选动作应用到角色；关闭时不执行重定向。</small></span></label>
+              <label class="parameter-check parameter-fixed"><input type="checkbox" checked disabled><span>使用网格法线<small>当前 API 固定开启。</small></span></label>
+              <div class="advanced-footer"><span>参数仅对下一次生成生效。</span><button type="reset" class="text-button">恢复高级默认值</button></div>
+            </form>
+          </details>
+          <div class="selected-motion" id="selected-motion"><span class="selection-caption">所选动画</span><div><strong id="selected-name">尚未选择动画</strong><span id="selected-detail">选好模型后，点击左侧动作直接生成。</span></div></div>
           <button class="text-button" id="preview-motion" type="button" disabled>预览所选动作骨架 ↗</button>
-          <button class="primary-button" id="generate" type="button" disabled><span>重新生成所选动作</span><span aria-hidden="true">↗</span></button>
+          <button class="primary-button" id="generate" type="button" disabled><span>重新生成所选动作</span><svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></button>
           <p class="run-hint" id="run-hint">先选角色模型，再点击动画卡片。</p>
         </section>
-        <section class="panel-section" aria-labelledby="cached-title">
-          <div class="panel-heading"><h2 id="cached-title">我的模型</h2><span class="format-label" id="cached-count">0</span></div>
+        <details class="model-library panel-section" id="model-library">
+          <summary><h2 id="cached-title"><svg class="icon" aria-hidden="true"><use href="#icon-cube"/></svg>我的模型</h2><span class="format-label" id="cached-count">0</span><svg class="icon details-chevron" aria-hidden="true"><use href="#icon-chevron"/></svg></summary>
           <p class="cache-message" id="cache-message" role="status">正在读取浏览器缓存…</p>
           <div class="cached-models" id="cached-models"></div>
           <p class="metadata-note">GLB 保存在当前浏览器、当前站点。清除站点数据会移除缓存，不影响服务端任务。</p>
-        </section>
+        </details>
         <section class="job-panel panel-section" id="job-panel" hidden aria-labelledby="job-title">
           <div class="job-heading"><h2 id="job-title">任务状态</h2><span class="job-state" id="job-state">准备提交</span></div>
           <ol class="job-steps" aria-label="生成阶段"><li data-stage="upload">上传</li><li data-stage="queued">排队</li><li data-stage="running">绑定</li><li data-stage="succeeded">完成</li></ol>
@@ -64,10 +106,10 @@
           <div class="job-actions"><button class="secondary-button" id="retry-job" type="button" hidden>重新连接任务</button><button class="text-button" id="dismiss-job" type="button" hidden>清除任务记录</button><div class="artifact-actions" id="artifact-actions" hidden><button class="secondary-button" id="view-result" type="button" disabled>生成动画</button><button class="secondary-button" id="view-joints" type="button" disabled>预测关节</button><button class="secondary-button" id="view-coarse" type="button" disabled>粗预测关节</button><a class="download-button" id="download-result" download>下载结果 ZIP ↓</a></div></div>
           <details id="artifact-details" hidden><summary>所有输出文件</summary><ul id="artifact-list"></ul></details>
         </section>
-        <section class="panel-section" aria-labelledby="guide-title">
-          <div class="panel-heading"><h2 id="guide-title">使用引导</h2></div>
-          <p class="inline-message">1. 上传 GLB、载入本机模型或使用示例。<br>2. 中英文搜索动作，悬停看短视频。<br>3. 调整绑定参数，点击动画卡片直接生成。<br>4. 完成后在中央播放你的角色，下载 GLB / FBX / ZIP。</p>
-          <p class="metadata-note">没有选模型时，点击卡片只记录动作；任务进行中不会重复提交。部署时需额外准备短视频资源，详见项目 README。</p>
+        <section class="panel-section guide-section" id="usage-guide" aria-labelledby="guide-title">
+          <div class="panel-heading"><h2 id="guide-title"><svg class="icon" aria-hidden="true"><use href="#icon-guide"/></svg>使用引导</h2></div>
+          <ol class="guide-steps"><li>上传 GLB、载入本机模型或使用示例。</li><li>中英文搜索动作，悬停看短视频。</li><li>调整绑定参数，点击动画卡片直接生成。</li><li>完成后播放你的角色，下载 GLB / FBX / ZIP。</li></ol>
+          <p class="metadata-note">没有选模型时，点击卡片只记录动作；任务进行中不会重复提交。源动作短视频与生成结果不同。</p>
         </section>
       </aside>
     </main>

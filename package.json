@@ -1,0 +1,14 @@
+{
+  "name": "mia-motion-studio-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.js"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.7"
+  }
+}
