@@ -14,7 +14,7 @@ Environment=MIA_UI=1
 Environment=MIA_JOBS_DIR=/data/Make-It-Animatable/.cache/api-jobs
 Environment=MIA_ANIMATIONS_DIR=/data/Make-It-Animatable/data/mixamo
 EnvironmentFile=-/etc/default/mia-v2-api
-Environment=MIA_TRUSTED_EGRESS_HOSTS=huggingface.co,us.aws.cdn.hf.co,raw.githubusercontent.com
+Environment=MIA_TRUSTED_EGRESS_HOSTS=huggingface.co,us.aws.cdn.hf.co,raw.githubusercontent.com,static-oss.neon-arcade.ai
 BindReadOnlyPaths=/data/Make-It-Animatable/mia-v2-api.resolv.conf:/etc/resolv.conf
 ExecStart=/data/Make-It-Animatable/.venv/bin/python /data/Make-It-Animatable/api_server.py
 Restart=on-failure
