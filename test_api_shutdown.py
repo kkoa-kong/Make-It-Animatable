@@ -10,13 +10,13 @@ class NativeShutdownTests(unittest.TestCase):
         # not while generating/exporting a character, and would kill the suite.
         code = """
 import bpy
-from api_server import _unload_blender_scripts
+from api_worker import unload_blender_scripts
 from util.blender_utils import enable_arp
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.object.armature_add()
 enable_arp(bpy.context.active_object)
-_unload_blender_scripts()
+unload_blender_scripts()
 """
         result = subprocess.run(
             [sys.executable, "-X", "faulthandler", "-c", code],

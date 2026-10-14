@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -19,7 +20,7 @@ logger = logging.getLogger("mia-v2-api.rig-cache")
 TTL_SECONDS = 24 * 60 * 60
 _SCHEMA = 1
 _ENTRY_NAME = re.compile(r"[0-9a-f]{64}\Z")
-_STAGE_NAME = re.compile(r"\.stage-[0-9a-f]{64}-[0-9a-f]{32}\Z")
+_STAGE_NAME = re.compile(r"\.stage-([0-9a-f]{64})-[0-9a-f]{32}\Z")
 _BINDING_OPTIONS = (
     "input_no_fingers",
     "input_normal",
@@ -100,12 +101,12 @@ class _KeyState:
 
 
 class RigCache:
-    """Single-process cache of clean rigs; no multi-worker filesystem sharing.
+    """Shared cache of clean rigs with thread and process lease exclusion.
 
-    Only hash entry names and .stage-<hash>-<uuid> directories are reserved by
-    this manager. Leases serialize a key and shield both active rigs and stages
-    from cleanup. Successful context exit publishes a miss atomically; failed
-    rendering never publishes. Hits never update the publication timestamp.
+    Hash entry names, .stage-<hash>-<uuid> directories and stable .locks files
+    are reserved by this manager. Leases serialize a key and shield both active
+    rigs and stages from cleanup. Successful context exit publishes a miss
+    atomically; failed rendering never publishes. Hits never update timestamps.
     """
 
     def __init__(
@@ -161,6 +162,27 @@ class RigCache:
         return all(path.name in {"character.blend", "metadata.json"} for path in directory.iterdir())
 
     @contextmanager
+    def _file_lock(self, key: str, *, blocking: bool = True) -> Iterator[bool]:
+        # Never unlink these files: every process must lock the same inode,
+        # including after eviction or after a worker dies holding its lease.
+        locks = self.directory / ".locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        with (locks / f"{key}.lock").open("a+b") as lockfile:
+            acquired = False
+            try:
+                flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+                try:
+                    fcntl.flock(lockfile.fileno(), flags)
+                    acquired = True
+                except BlockingIOError:
+                    if blocking:
+                        raise
+                yield acquired
+            finally:
+                if acquired:
+                    fcntl.flock(lockfile.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
     def lease(self, input_path: Path, options: Mapping, engine_signature: str) -> Iterator[RigLease]:
         input_digest = content_hash(input_path)
         identity = {
@@ -176,7 +198,7 @@ class RigCache:
         stage: Path | None = None
         publication_blocked = False
         try:
-            with state.lock:
+            with state.lock, self._file_lock(key):
                 with self._guard:
                     self.directory.mkdir(parents=True, exist_ok=True)
                     entry = self.directory / key
@@ -235,28 +257,30 @@ class RigCache:
         for directory in directories:
             if self._closed.is_set():
                 break
-            is_stage = _STAGE_NAME.fullmatch(directory.name) is not None
+            stage_match = _STAGE_NAME.fullmatch(directory.name)
+            is_stage = stage_match is not None
             is_entry = _ENTRY_NAME.fullmatch(directory.name) is not None
             if not (is_stage or is_entry):
                 continue
+            key = stage_match.group(1) if is_stage else directory.name
             try:
                 with self._guard:
-                    if directory.is_symlink() or not directory.is_dir():
+                    if key in self._keys or directory.name in self._stages:
                         continue
-                    if is_stage:
-                        if directory.name in self._stages:
+                    with self._file_lock(key, blocking=False) as acquired:
+                        if not acquired:
+                            continue
+                        # Recheck everything after locking: another process may
+                        # have published or removed this path since the listing.
+                        if directory.is_symlink() or not directory.is_dir():
                             continue
                         if not self._owned_entry(directory):
                             continue
-                    else:
-                        if directory.name in self._keys:
-                            continue
-                        if not self._owned_entry(directory):
-                            continue
-                        metadata = self._metadata(directory, directory.name)
-                        if metadata is not None and self._clock() < metadata["published_at"] + TTL_SECONDS:
-                            continue
-                    shutil.rmtree(directory)
+                        if not is_stage:
+                            metadata = self._metadata(directory, key)
+                            if metadata is not None and self._clock() < metadata["published_at"] + TTL_SECONDS:
+                                continue
+                        shutil.rmtree(directory)
             except OSError:
                 logger.exception("Unable to remove expired/incomplete rig-cache directory %s", directory)
 

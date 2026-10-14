@@ -1,0 +1,24 @@
+# Host deployment example. Relative paths resolve beside this file.
+[api]
+host = "0.0.0.0"
+port = 8081
+ui = true
+
+[storage]
+jobs_dir = ".cache/api-jobs"
+rig_cache_dir = ".cache/rig-cache"
+animations_dir = "data/mixamo"
+
+[models]
+checkpoint_dir = "output/best/v2"
+# hf_home defaults to .cache/huggingface in the checkout.
+# hy3dgen_models defaults to ~/.cache/hy3dgen; override for your host.
+
+[workers]
+cpu_threads_per_worker = 4
+queue_poll_interval_ms = 200
+shutdown_timeout_seconds = 300
+
+[[workers.gpu_groups]]
+physical_gpu = 4
+count = 6

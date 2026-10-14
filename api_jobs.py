@@ -14,12 +14,14 @@ class JobStore:
         self.root = Path(root).resolve()
         self._database = self.root / "jobs.sqlite3"
 
-    def initialize(self) -> None:
-        """Create the store and fail work interrupted by a previous process."""
+    def initialize_schema(self) -> None:
+        """Create or migrate metadata without changing any job's state."""
         self.root.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._database, timeout=30)
         try:
+            connection.execute("PRAGMA journal_mode=WAL")
             with connection:
+                connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
                     """
                     CREATE TABLE IF NOT EXISTS jobs (
@@ -31,11 +33,36 @@ class JobStore:
                         updated_at TEXT NOT NULL,
                         error TEXT,
                         error_code INTEGER,
-                        request TEXT NOT NULL
+                        request TEXT NOT NULL,
+                        worker_id TEXT,
+                        worker_run_id TEXT
                     )
                     """
                 )
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(jobs)")
+                }
+                for column in ("worker_id", "worker_run_id"):
+                    if column not in columns:
+                        connection.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
+                # SQLite indexes include rowid, preserving FIFO within queued rows.
                 connection.execute(
+                    "CREATE INDEX IF NOT EXISTS jobs_queued "
+                    "ON jobs(status) WHERE status = 'queued'"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS jobs_running_owner "
+                    "ON jobs(worker_run_id) WHERE status = 'running'"
+                )
+        finally:
+            connection.close()
+
+    def recover_interrupted(self) -> int:
+        """Fail interrupted running work; called once by the owning supervisor."""
+        connection = sqlite3.connect(self._database, timeout=30)
+        try:
+            with connection:
+                result = connection.execute(
                     """
                     UPDATE jobs
                     SET status = 'failed', updated_at = ?, error = ?, error_code = ?
@@ -47,6 +74,7 @@ class JobStore:
                         500,
                     ),
                 )
+                return result.rowcount
         finally:
             connection.close()
 
@@ -106,8 +134,8 @@ class JobStore:
         try:
             connection.row_factory = sqlite3.Row
             row = connection.execute(
-                "SELECT job_id, status, created_at, updated_at, error, error_code, request "
-                "FROM jobs WHERE job_id = ?",
+                "SELECT job_id, status, created_at, updated_at, error, error_code, request, "
+                "worker_id, worker_run_id FROM jobs WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
         finally:
@@ -118,35 +146,59 @@ class JobStore:
         job["request"] = json.loads(job["request"])
         return job
 
-    def pending(self) -> list[str]:
-        """Return queued identifiers in persistent creation order."""
+    def claim_next(self, worker_id: str, worker_run_id: str) -> dict | None:
+        """Atomically assign the earliest queued job to one worker incarnation."""
         connection = sqlite3.connect(self._database, timeout=30)
         try:
-            rows = connection.execute(
-                "SELECT job_id FROM jobs WHERE status = 'queued' ORDER BY rowid"
-            ).fetchall()
+            connection.row_factory = sqlite3.Row
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT * FROM jobs WHERE status = 'queued' ORDER BY rowid LIMIT 1"
+                ).fetchone()
+                if row is None:
+                    return None
+                job = dict(row)
+                job["request"] = json.loads(job["request"])
+                timestamp = datetime.now(timezone.utc).isoformat()
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'running', updated_at = ?, worker_id = ?, worker_run_id = ?
+                    WHERE job_id = ? AND status = 'queued'
+                    """,
+                    (timestamp, worker_id, worker_run_id, job["job_id"]),
+                )
+                job.update(
+                    status="running",
+                    updated_at=timestamp,
+                    worker_id=worker_id,
+                    worker_run_id=worker_run_id,
+                )
+            return job
         finally:
             connection.close()
-        return [row[0] for row in rows]
 
-    def update(
+    def finish(
         self,
         job_id: str,
+        worker_run_id: str,
         status: str,
         *,
         error: str | None = None,
         error_code: int | None = None,
-    ) -> None:
-        if status not in ("queued", "running", "succeeded", "failed"):
-            raise ValueError("Unknown job status")
+    ) -> bool:
+        """Complete running work only if this worker incarnation still owns it."""
+        if status not in ("succeeded", "failed"):
+            raise ValueError("Completion status must be succeeded or failed")
         connection = sqlite3.connect(self._database, timeout=30)
         try:
             with connection:
-                connection.execute(
+                result = connection.execute(
                     """
                     UPDATE jobs
                     SET status = ?, updated_at = ?, error = ?, error_code = ?
-                    WHERE job_id = ?
+                    WHERE job_id = ? AND worker_run_id = ? AND status = 'running'
                     """,
                     (
                         status,
@@ -154,8 +206,43 @@ class JobStore:
                         error,
                         error_code,
                         job_id,
+                        worker_run_id,
                     ),
                 )
+                return result.rowcount == 1
+        finally:
+            connection.close()
+
+    def fail_worker(
+        self, worker_run_id: str, *, error: str, error_code: int = 500
+    ) -> int:
+        """Fail only unfinished work owned by an exited worker incarnation."""
+        connection = sqlite3.connect(self._database, timeout=30)
+        try:
+            with connection:
+                result = connection.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'failed', updated_at = ?, error = ?, error_code = ?
+                    WHERE worker_run_id = ? AND status = 'running'
+                    """,
+                    (
+                        datetime.now(timezone.utc).isoformat(),
+                        error,
+                        error_code,
+                        worker_run_id,
+                    ),
+                )
+                return result.rowcount
+        finally:
+            connection.close()
+
+    def running_count(self) -> int:
+        connection = sqlite3.connect(self._database, timeout=30)
+        try:
+            return connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status = 'running'"
+            ).fetchone()[0]
         finally:
             connection.close()
 

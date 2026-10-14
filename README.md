@@ -93,7 +93,7 @@ The API listens on **8081**. Model and animation sources are selected independen
 | `GET /animations/{motion_id}` | Original metadata and pinned dataset revision |
 | `GET /animations/{motion_id}/file` | Original pure animation FBX |
 
-One GPU job runs at a time; additional submissions queue without holding the HTTP connection open. Invalid request parameters return `422`; unavailable workers return `503`. Download and inference errors occur asynchronously and are reported in the job state.
+The single HTTP API supervises independent GPU worker processes. Each worker executes one job; additional submissions share a persistent SQLite queue without holding the HTTP connection open. `max_concurrency` reports ready workers (including busy workers), and `running_jobs` counts claimed tasks, including downloads and cache-lock waits. Invalid parameters return `422`; zero ready workers or stopping returns `503` for health/submission, while existing job queries and downloads remain available.
 
 ```bash
 curl -sS http://127.0.0.1:8081/generate \
@@ -113,9 +113,9 @@ For extensionless mesh URLs, supply `input_format`, for example `"glb"` or `"fbx
 
 Job metadata and requests persist in SQLite under `MIA_JOBS_DIR`, defaulting to `.cache/api-jobs`. Successful tasks persist the final `animatable.glb` and `manifest.json`, not a ZIP. Blender exports the final GLB directly after rigging, retargeting and animation baking; the API does not generate debug/intermediate visualizations or export a final FBX and convert it. In UI mode, the optional `animatable_preview.glb` entry is an inline route to the same GLB bytes, not a second export, file copy or duplicated storage. Non-UI mode exposes no generated preview. The manifest's `artifacts` list records `animatable.glb`, optional `animatable_preview.glb`, and `manifest.json`; library animation metadata and request options remain available. `result_url` and `manifest_url` are `null` until success, and `preview_url` is also `null` whenever preview is unavailable. Results remain downloadable repeatedly and survive service restarts. Queued jobs resume on startup; interrupted running jobs become failed rather than silently being retried. There is no automatic result expiration: retain this directory during deployment changes and manage its disk usage explicitly. Old ZIP-only results must be regenerated; there is no ZIP compatibility shim or `/jobs/{job_id}/artifacts/{name}` endpoint.
 
-The single-process API worker automatically caches clean, bound Blender characters for **24 hours** in `.cache/rig-cache` (`MIA_RIG_CACHE_DIR` overrides the writable directory); no Redis or request changes are required. Keys combine model-content SHA-256, binding options and a once-per-model-initialization content fingerprint of weights/VAE, template, binding code and Blender version. Changing only the motion, retargeting, in-place setting or UI mode reuses the base, skipping prediction and rebuilding bones/weights; motion application, baking and final GLB export still run. Packed textures and binding pose live in the internal `.blend`, before any motion is applied. Restart after engine/dependency updates.
+Workers share clean, bound Blender characters for **24 hours** in `.cache/rig-cache` (`MIA_RIG_CACHE_DIR` overrides the writable directory); no Redis or request changes are required. Keys combine model-content SHA-256, binding options and a once-per-worker-initialization content fingerprint of weights/VAE, template, binding code and Blender version. Changing only the motion, retargeting, in-place setting or UI mode reuses the base, skipping prediction and rebuilding bones/weights; motion application, baking and final GLB export still run. Packed textures and binding pose live in the internal `.blend`, before any motion is applied. Restart after engine/dependency updates.
 
-TTL is fixed from successful cache publication, not renewed on hits. Expired lookups miss immediately; startup and validated generation requests opportunistically launch one throttled background cleaner (at most once per five minutes). Idle services may retain expired files until the next hook. Active entries/staging are protected, publication is atomic, and failed jobs do not publish partial bases. Cache cleanup never removes successful job GLB/manifest files. Preserve the directory for reuse across restarts, but **do not share it across worker processes**. Model uploads/URL downloads are still required before content-based lookup; cache files are not public artifacts.
+TTL is fixed from successful publication, not renewed on hits. The API schedules cleanup at startup and every five minutes, including while idle. Per-key POSIX file locks protect the entire cache lease, publication and cleanup across processes; same-key tasks serialize even on hits, while different keys execute independently. Busy entries and staging directories are skipped by cleanup. Stable `.locks/<key>.lock` files are intentionally retained: never unlink them while the service runs. Failed jobs never publish partial bases; cleanup does not remove successful job GLB/manifest files. Keep SQLite and cache directories on a local filesystem supporting SQLite WAL, `flock` and atomic rename, not an NFS/shared-host queue. Model uploads/URL downloads are still required before content-based lookup; cache files are not public artifacts.
 
 #### Local Mixamo motion library
 
@@ -153,21 +153,19 @@ Prepare the fast card previews separately:
 
 The pinned HF dataset contains **no GIF**; `animation_motion_render/` provides four MP4 views per motion. This command downloads only the exact filename-stem-matched `v000.mp4`, stored as `previews/<motion_id>.mp4`. It prefers `https://hf-mirror.com` only after the pinned render inventory matches official paths, sizes and hashes, and falls back to official HF if that verification fails. Existing downloads are integrity-checked and interrupted transfers resume. This host has **2,317 verified previews**, totaling **105,453,156 bytes**, with zero missing mappings; details are in `preview_validation_report.json`. Mount `previews/` together with the original motion library. Preview requests are local: the browser never contacts HF or parses FBX just to show a card.
 
-`web/motion-index.zh-CN.json` ships with the code and uses the original Motion IDs and pinned dataset/revision. The API loads it at startup, exposes `prompt_zh` / `description_zh`, and retains original `prompt` / `description` and manifest fields. A missing display file falls back to English; invalid provenance or IDs fail catalog loading explicitly. Rebuild local font subsets with `.venv/bin/python prepare_ui_fonts.py` after editing the display index. Backend/index changes require a worker restart during your deployment window; do not start a second GPU worker. Static UI changes require a browser reload. These changes do not authorize an automatic production restart.
+`web/motion-index.zh-CN.json` ships with the code and uses the original Motion IDs and pinned dataset/revision. The API loads it at startup, exposes `prompt_zh` / `description_zh`, and retains original `prompt` / `description` and manifest fields. A missing display file falls back to English; invalid provenance or IDs fail catalog loading explicitly. Rebuild local font subsets with `.venv/bin/python prepare_ui_fonts.py` after editing the display index. Backend/index changes require a service restart during your deployment window; do not start a second supervisor sharing the same jobs directory. Static UI changes require a browser reload. These changes do not authorize an automatic production restart.
 
 #### Web animation studio
 
-Enable the optional HTML/Three.js interface on the same worker and port:
+Enable the optional HTML/Three.js interface on the same API and port:
 
 ```bash
-CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py --ui
-# Equivalent environment configuration:
+.venv/bin/python api_server.py --config mia-api.toml
+# Without a configuration file, the legacy one-worker launch remains available:
 MIA_UI=1 CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py
 ```
 
-Open `http://agent-models-api.singularity-ai.com:8081/` through your existing access path, or `http://127.0.0.1:8081/` on the host. Without `--ui` or `MIA_UI=1`, the command remains API-only. The supplied development systemd unit now enables `MIA_UI=1`; this does not launch a second GPU worker or Gradio.
-
-The development service is already running; access its URL directly. Stop `mia-v2-api.service` before using a foreground command so two workers do not compete for the same port and job directory.
+`mia-api.toml` is the host deployment example: UI enabled, physical GPU 4, six independent workers. Without a file, defaults remain API-only with one worker; `--ui` explicitly enables the UI. Stop an existing service before foreground startup. A jobs-directory singleton lock rejects duplicate supervisors before they can recover running jobs. This checkout does not change a running deployment.
 
 The studio uses a midnight-blue three-column layout: motion categories/search and two-column video cards on the left, the main 3D viewport in the center, model upload/options/history on the right. Both sidebars scroll independently; narrower screens reflow the panels. Grid/list controls switch card presentation, Cmd/Ctrl+K focuses motion search, and the “My models” header opens the browser cache section. The stage supports fullscreen and displays real model statistics over a blue-lit grid floor. The supplied reference artwork is cropped/compressed under `web/art/`; the interface remains real HTML and Three.js rather than a screenshot. Choose a GLB model, adjust parameters, then click an animation card to submit immediately. Without a model, clicking only records the motion; selecting a model later does not submit automatically. Double-clicks and clicks during upload/queued/running tasks do not append jobs. The separate generation button is for retrying or applying changed parameters. Actual upload progress and task states are shown without fabricated inference percentages. Reloading reconnects the last saved task without submitting another job.
 
@@ -211,13 +209,33 @@ Generation uses the real remote GPU and persists jobs on that server; local prev
 
 #### Temporary host service
 
-Use the existing Python 3.11 `.venv`, V2 checkpoints, Hunyuan VAE cache and `data/Mixamo/bones.fbx`. Start directly for foreground development:
+The API/config/storage layer needs only Python 3.11+ and `api-requirements.txt`; it does not import Torch or Blender. A local lightweight environment can inspect routes and persisted results without installing GPU dependencies:
 
 ```bash
-CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py
+python3 -m venv .venv-api
+.venv-api/bin/python -m pip install -r api-requirements.txt
+.venv-api/bin/python api_server.py --config mia-api.toml
 ```
 
-The supplied `mia-v2-api.service` is configured for this host's `/data/Make-It-Animatable` path and **physical GPU 4**, exposed as logical CUDA device 0. It runs without Docker, restarts on process failure and starts at boot:
+Missing weights/native dependencies leave zero ready workers and reject generation with `503`; no CPU fallback or fake generation is provided. Use temporary jobs/cache paths for local development rather than a production data directory.
+
+On the **Linux GPU host**, prepare the environment before starting the service:
+
+1. Populate submodules with `git submodule update --init --recursive`, including `util/Hunyuan3D_21` and `util/auto_rig_pro`.
+2. Install a compatible NVIDIA driver and the native libraries listed in `Dockerfile.api`. Use the existing Python 3.11/Torch 2.8.0 CUDA 12.9 environment or the documented container/wheelhouse installation. Specialized `torch-cluster`, PyTorch3D and xformers wheels must match the Linux architecture, Python, Torch and CUDA combination; never copy a macOS virtualenv onto the host. `api-offline-requirements.txt` assumes Torch/torchvision are already provided by the base environment.
+3. Prepare all three V2 checkpoints, the Hunyuan VAE `config.yaml` and `model.fp16.ckpt`, and the skeleton templates required by `app_v2` under `data/Mixamo`. Prepare the optional motion library/previews separately using the existing commands above. Workers set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`; startup is not an installer or a model-download step.
+4. Edit `mia-api.toml` for the host's paths and GPU layout. Ensure the service user can write jobs/cache directories and, when external checkpoints need a new canonical symlink, `output/best`. Existing mismatched checkpoint directories are rejected, not replaced.
+5. Start the API using the same virtualenv used to install compute dependencies; children use `sys.executable`. Require all six workers ready before the GPU acceptance run.
+
+```bash
+.venv/bin/python api_server.py --config mia-api.toml
+```
+
+Configuration priority is explicit environment overrides > TOML > defaults. `--config` selects the file, otherwise `MIA_CONFIG` does. File paths are relative to that file; environment paths are relative to the launch directory. Sections are `[api]`, `[storage]`, `[models]`, `[workers]` and `[[workers.gpu_groups]]`. Add another GPU group to expand without changing clients. Explicit groups override inherited `CUDA_VISIBLE_DEVICES`/`GPU_ID`; each child gets its group's physical ordinal and logical CUDA device 0. Container GPU ordinals are those visible **inside** the container; a container exposing only host GPU 4 normally uses group ordinal 0, not 4.
+
+Existing path/limit variables remain supported: `MIA_JOBS_DIR`, `MIA_RIG_CACHE_DIR`, `MIA_ANIMATIONS_DIR`, `MIA_CHECKPOINT_DIR`, `HF_HOME`, `HY3DGEN_MODELS`, `MIA_MAX_INPUT_BYTES`, `MIA_DOWNLOAD_TIMEOUT`, plus `MIA_HOST`, `PORT`, `MIA_UI`, `WORKER_ID`. Worker overrides are `MIA_CPU_THREADS_PER_WORKER`, `MIA_QUEUE_POLL_INTERVAL_MS`, `MIA_SHUTDOWN_TIMEOUT_SECONDS` and `MIA_GPU_GROUPS` (JSON array of objects with `physical_gpu`/`count`). `cpu_threads_per_worker` constrains Torch, BLAS/OpenMP and Blender scene settings; it is not an OS-level total-thread cap. `/info.gpu` stays the logical-device scalar 0 for compatibility; the configuration describes the complete physical layout.
+
+The supplied `mia-v2-api.service` uses `/data/Make-It-Animatable/mia-api.toml` and the host `.venv`. Review these paths before installation; the commands below deploy only when you run them:
 
 ```bash
 sudo systemctl link /data/Make-It-Animatable/mia-v2-api.service
@@ -256,9 +274,13 @@ docker run --rm --gpus '"device=4"' -p 8081:8081 \
 ```
 Container deployment is API-only by default (`MIA_UI=0`): do not pass `--ui` or `MIA_UI=1` in the deployment command. The separately documented host UI is a development option, not the container startup mode.
 
-The supported process entry point is `python api_server.py`, not `uvicorn api_server:app`: model initialization and Blender operators must run on the process main thread. SIGTERM stops new submissions, waits for the active task while continuing to service its Blender export queue, and leaves queued jobs for the next startup. After the HTTP/job threads finish, the main thread disables Blender add-ons and unregisters startup scripts in reverse registration order before Python finalization. This prevents bpy 4.3's Python-backed UI class destructors from accessing an already finalized interpreter. Script cleanup uses bpy 4.3's internal module registry; revalidate startup, animation generation and SIGTERM shutdown when upgrading bpy.
+Use `python api_server.py` as the service entry point. The API never loads CUDA/Blender; each fresh-interpreter worker initializes and computes on its own main thread. SIGTERM closes admission/claiming, drains claimed work and preserves queued work. The configured shutdown timeout bounds the drain/escalation period; survivors are terminated/killed, reaped, and their owned running jobs fail with code 500. Monitor reconciliation can additionally wait for SQLite's connection timeout. `KillMode=mixed` lets the API drain before systemd kills the entire cgroup at `TimeoutStopSec`; keep that systemd limit above the worker timeout (the example uses 330 versus 300 seconds). Workers are not automatically restarted and jobs are not automatically retried. Service startup recovers interrupted tasks once, after acquiring the singleton lock. Native Blender cleanup remains worker-local; upgrading bpy requires real generation and shutdown validation. Current Uvicorn versions may re-raise SIGTERM after logging completed application shutdown, so a signal exit alone is not evidence of failed cleanup.
 
-Shutdown verification must include a real animation/retargeting request, not only an idle worker: idle shutdown alone does not exercise registered Blender UI classes. Blender may still print `Not freed memory blocks` during native teardown; that diagnostic is not suppressed and must not be confused with a clean memory-leak audit. Require exit code 0, valid generated FBX/GLB artifacts and released GPU allocations.
+Shutdown verification must include a real animation/retargeting request, not only an idle worker: idle shutdown alone does not exercise registered Blender UI classes. Blender may still print `Not freed memory blocks` during native teardown; that diagnostic is not suppressed and must not be confused with a clean memory-leak audit. Require clean worker exit, valid generated GLB/manifest artifacts and released GPU allocations; distinguish the API's Uvicorn signal exit from a native worker crash.
+
+#### Multi-worker deployment acceptance
+
+Local checks cover configuration, process lifecycle, SQLite ownership, cross-process cache exclusion and HTTP availability without compute dependencies. They do not establish GPU memory capacity or Blender compatibility. After deployment verify: six ready workers; old result downloads; six distinct uncached models executing with overlapping times; card memory peak, total throughput and per-task latency; one worker killed without failing others or duplicating claims; same-model concurrency, cleanup and service restart preserving cache integrity. Six workers on a 4090 is the target configuration, not a measured optimum.
 
 
 The Docker example assumes ordinary public DNS and outbound connectivity. If the container also uses a fake-IP gateway, configure its DNS and trusted-egress hostnames explicitly rather than disabling IP checks.

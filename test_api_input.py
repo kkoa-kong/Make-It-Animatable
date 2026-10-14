@@ -78,7 +78,7 @@ class UploadPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             store = JobStore(root)
-            store.initialize()
+            store.initialize_schema()
             contents = b"glTF" + struct.pack("<II", 2, 16) + b"abcd"
             upload = UploadFile(io.BytesIO(contents), size=len(contents), filename="../../model.glb")
             staged = save_glb(upload, 1024, root)
@@ -92,8 +92,8 @@ class UploadPersistenceTests(unittest.TestCase):
             )
             self.assertFalse(staged.exists())
             recreated = JobStore(root)
-            recreated.initialize()
-            self.assertEqual(recreated.pending(), [job["job_id"]])
+            recreated.initialize_schema()
+            self.assertEqual(recreated.get(job["job_id"])["status"], "queued")
             self.assertEqual((recreated.directory(job["job_id"]) / "character.glb").read_bytes(), contents)
             self.assertEqual((recreated.directory(job["job_id"]) / "animation.fbx").read_bytes(), animation_bytes)
             self.assertTrue(recreated.get(job["job_id"])["request"]["_uploaded_input"])

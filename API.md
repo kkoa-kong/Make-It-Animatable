@@ -14,9 +14,9 @@ BASE='http://agent-models-api.singularity-ai.com:8081'
 
 ## Web 三栏工作台
 
-UI 模式启用后，直接在浏览器打开 `http://agent-models-api.singularity-ai.com:8081/`。当前开发 systemd 服务已配置 `MIA_UI=1`；前台替代运行可用 `CUDA_VISIBLE_DEVICES=4 GPU_ID=0 PORT=8081 .venv/bin/python api_server.py --ui`，也可设置 `MIA_UI=1`。不启用时仍是 API-only 模式。
+UI 与 API 仍共用一个 HTTP 入口。启动示例：`.venv/bin/python api_server.py --config mia-api.toml`；该配置启用 UI，并在物理 GPU 4 上启动六个独立计算 Worker。也可通过 `--ui` 或 `MIA_UI=1` 启用 UI。不指定配置时，保留 API-only、单 Worker 的默认启动方式。
 
-当前常驻服务已在运行，直接访问即可。需要前台启动时先停止已有 `mia-v2-api.service`，避免重复占用 8081 和同一个任务目录；UI 与 API 共用一个 Worker，不应另外启动第二个服务。
+部署前先停止旧服务，保留任务及缓存目录。不要另启一个 API 进程共享同一任务目录；主服务会在恢复任务前取得独占锁。计算依赖、权重、GPU 配置及 systemd 安装说明见 README，本次代码更新不会自动部署或重启线上服务。
 
 界面使用本地 HTML/CSS/Three.js 和本地中英文字体，不依赖 Gradio、外部 CDN 或 Node 构建。桌面采用单屏三栏：左侧动画分类与动作卡片，中间 3D 模型，右侧上传、参数和「我的模型」；两侧独立滚动，导航保持紧凑。不提供移动端布局或面板切换。现代浏览器需支持 WebGL2。流程：
 
@@ -51,8 +51,8 @@ UI 模式启用后，直接在浏览器打开 `http://agent-models-api.singulari
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /health` | 模型就绪返回 `200`，否则 `503` |
-| `GET /info` | Worker 状态、GPU、运行任务数、输入格式、上传格式、动作库状态与动作数量 |
+| `GET /health` | 至少一个计算 Worker 就绪且服务未停止时返回 `200`，否则 `503` |
+| `GET /info` | 汇总状态、逻辑 GPU 字段、运行任务数、就绪容量、输入格式和动作库信息 |
 
 ```bash
 curl -sS -i "$BASE/health"
@@ -65,7 +65,7 @@ curl -sS "$BASE/info"
 {"status":"ok","model":"mia-v2"}
 ```
 
-单 Worker 同时执行一个任务，其他任务进入队列。
+一个 Worker 同时执行一个任务；全部 Worker 竞争领取同一个 SQLite 持久队列。`max_concurrency` 为已就绪且未停止的 Worker 数，包括忙碌 Worker；六个全部就绪时为 6。`running_jobs` 汇总已领取任务，包括下载、缓存锁等待及计算。`worker_id` 保留服务身份，`gpu` 保留逻辑设备标量 0，物理多卡布局以配置为准。计算 Worker 全部不可用时，历史任务查询及下载仍可用，生成返回 `503`。内部任务归属字段不出现在现有任务响应中。
 
 ## 3. 动作库查询
 
@@ -297,7 +297,7 @@ curl --fail -sS "$BASE/jobs/$JOB_ID/manifest" -o manifest.json
 | 任务状态 | 说明 |
 | --- | --- |
 | `queued` | 排队等待 |
-| `running` | 正在下载、转换、推理或烘焙 |
+| `running` | 已被 Worker 领取，正在下载、转换、等待绑定缓存锁、推理或烘焙 |
 | `succeeded` | 可下载成功结果 |
 | `failed` | 查看 `error`、`error_code` |
 
@@ -395,4 +395,4 @@ curl --fail -sS "$BASE/jobs/$JOB_ID/preview" -o animatable_preview.glb
 - 服务会检查下载地址及重定向目标，默认拒绝内网、回环和链路本地地址。当前 TUN 假 IP 网关上的资源域名及重定向域名须配置在 `MIA_TRUSTED_EGRESS_HOSTS`。
 - 文件上传不经过 URL 下载校验，不要求把开发电脑域名加入资源下载白名单。
 - 当前没有应用层鉴权，依赖现有访问限制。反向代理若限制请求大小或上传超时，需要匹配所需文件大小；本次未更改反向代理配置。
-- 服务器本机已经验证四种文件/URL 组合、两种模型来源 + 库内 ID、互斥拒绝、排队双文件上传重启恢复，以及 Blender 重新导入检查。开发电脑到上述域名入口尚未实测。
+- 多进程改造的本地验证不等于线上 GPU 验收。部署后需验证旧结果下载、六个不同冷缓存任务真实并发、显存峰值/吞吐、单 Worker 退出归属、同模型缓存并发与重启。无自动任务重试或 Worker 重拉；中断任务继续使用失败状态和错误码 500。

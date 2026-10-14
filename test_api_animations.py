@@ -12,7 +12,7 @@ class AnimationCatalogTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.payload = b"Temporary animation fixture; no FBX parsing is required.\n"
         self.records = [
             self.record(1, "z_exact.fbx", "Walk", "Original description.\n  Keep spacing!"),
