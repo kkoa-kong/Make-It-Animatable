@@ -63,7 +63,7 @@ class Settings:
     cpu_threads_per_worker: int = 1
     queue_poll_interval_ms: int = 250
     shutdown_timeout_seconds: float = 300.0
-    max_input_bytes: int = 100 * 1024 * 1024
+    max_input_bytes: int = 200 * 1024 * 1024
     download_timeout: float = 30.0
     ui: bool = False
     worker_id: str = "mia-v2-0"

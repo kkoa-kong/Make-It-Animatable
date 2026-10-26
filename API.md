@@ -258,7 +258,7 @@ curl -sS -i "$BASE/generate" \
 | `input_retarget` | boolean | `true` | 应用动画时启用重定向 |
 | `input_inplace` | boolean | `true` | 应用动画时启用原地运动 |
 
-未知参数（包括 `animation_name`）返回 `422`。JSON/options 文本上限 64 KiB。默认每个上传或下载文件上限 100 MiB，由 `MIA_MAX_INPUT_BYTES` 配置；multipart 整体上限为两份文件上限加 64 KiB 表单开销。
+未知参数（包括 `animation_name`）返回 `422`。JSON/options 文本上限 64 KiB。默认每个上传或下载文件上限 200 MiB，由 `MIA_MAX_INPUT_BYTES` 配置；multipart 整体上限为两份文件上限加 64 KiB 表单开销。
 
 上传本身仍需等待文件传输完成。服务完成校验并将文件保存到持久化任务目录后，才返回 `202`；后续下载、推理和烘焙异步执行。
 
