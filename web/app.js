@@ -515,6 +515,7 @@ function bindingOptions() {
     input_rest_parts: restPose === 'No' ? [] : [...document.querySelectorAll('[name="rest-parts"]:checked')].map((input) => input.value),
     input_normal: true,
     input_sampling_mode: $('sampling-mode').value,
+    input_preserve_normals: $('preserve-normals').checked,
     input_bw_fix: $('bw-fix').checked,
     input_restore_global: $('restore-global').checked,
     input_reset_to_rest: $('reset-to-rest').checked,

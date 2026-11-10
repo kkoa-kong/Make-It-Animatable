@@ -25,6 +25,7 @@ _BINDING_OPTIONS = (
     "input_no_fingers",
     "input_normal",
     "input_sampling_mode",
+    "input_preserve_normals",
     "input_bw_fix",
     "input_restore_global",
     "input_reset_to_rest",
@@ -68,7 +69,7 @@ def fingerprint_engine(
         f"source/{name}": root / name
         for name in (
             "app_v2.py", "app_blender.py", "model.py", "models_ae.py",
-            "api_rig_cache.py", "api_mesh_input.py", "util/utils.py",
+            "api_rig_cache.py", "api_mesh_input.py", "util/utils.py", "util/mesh_normals.py",
             "util/misc.py", "util/blender_utils.py", "util/dataset_mixamo.py",
             "util/dataset_mixamo_additional.py",
         )

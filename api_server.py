@@ -108,6 +108,7 @@ def info() -> dict[str, object]:
             "input_rest_parts",
             "input_normal",
             "input_sampling_mode",
+            "input_preserve_normals",
             "input_bw_fix",
             "input_restore_global",
             "input_reset_to_rest",

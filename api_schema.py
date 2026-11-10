@@ -23,6 +23,7 @@ class GenerateOptions(BaseModel):
     input_rest_parts: list[REST_PARTS] = Field(default_factory=list)
     input_normal: Literal[True] = True
     input_sampling_mode: Literal["surface", "vertex"] = "surface"
+    input_preserve_normals: bool = False
     input_bw_fix: bool = True
     input_restore_global: bool = False
     input_reset_to_rest: bool = True

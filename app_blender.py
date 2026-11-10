@@ -9,6 +9,7 @@ import trimesh
 from pytorch3d.transforms import Scale
 
 import util.blender_utils as blender_utils
+from util.mesh_normals import copy_for_blender
 from util.blender_utils import bpy as bpy
 from util.utils import HiddenPrints, save_gs, transform_gs
 
@@ -42,7 +43,6 @@ def _bind_character(args: argparse.Namespace):
     mesh = data["mesh"]
     if isinstance(mesh, np.ndarray):
         mesh: trimesh.Trimesh = mesh.item()
-    mesh = mesh.copy()
     gs = data["gs"]
     joints = data["joints"]
     joints_tail = data["joints_tail"]
@@ -89,10 +89,9 @@ def _bind_character(args: argparse.Namespace):
         blender_utils.update()
 
         with tempfile.NamedTemporaryFile(suffix=".glb") as f:
-            if not args.keep_raw:
-                verts = mesh.vertices
-                verts[:, 1], verts[:, 2] = verts[:, 2].copy(), -verts[:, 1].copy()
-                mesh.vertices = verts / scaling
+            mesh = copy_for_blender(
+                mesh, data.get("vertex_normals"), keep_raw=args.keep_raw, scaling=scaling,
+            )
             mesh.export(f.name)
             mesh_obj = blender_utils.load_file(f.name)
             mesh_obj = blender_utils.get_all_mesh_obj(mesh_obj)[0]

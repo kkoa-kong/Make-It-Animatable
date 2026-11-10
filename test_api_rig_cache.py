@@ -40,6 +40,7 @@ class RigCacheTests(unittest.TestCase):
             "input_no_fingers": False,
             "input_normal": True,
             "input_sampling_mode": "surface",
+            "input_preserve_normals": False,
             "input_bw_fix": True,
             "input_restore_global": False,
             "input_reset_to_rest": True,
@@ -123,6 +124,7 @@ class RigCacheTests(unittest.TestCase):
             "input_no_fingers": True,
             "input_normal": False,
             "input_sampling_mode": "vertex",
+            "input_preserve_normals": True,
             "input_bw_fix": False,
             "input_restore_global": True,
             "input_reset_to_rest": False,
@@ -183,7 +185,7 @@ class RigCacheTests(unittest.TestCase):
         engine = self.root / "engine"
         sources = (
             "app_v2.py", "app_blender.py", "model.py", "models_ae.py",
-            "api_rig_cache.py", "api_mesh_input.py", "util/utils.py",
+            "api_rig_cache.py", "api_mesh_input.py", "util/utils.py", "util/mesh_normals.py",
             "util/misc.py", "util/blender_utils.py", "util/dataset_mixamo.py",
             "util/dataset_mixamo_additional.py", "util/Hunyuan3D_21/model.py",
         )

@@ -32,6 +32,7 @@ from util.dataset_mixamo import (
     Joint,
     get_hips_transform,
 )
+from util.mesh_normals import load_mesh_with_normals
 from util.utils import (
     TimePrints,
     Timing,
@@ -116,6 +117,7 @@ class DB:
     sample_mask: np.ndarray = None
     verts: torch.Tensor = None
     verts_normal: torch.Tensor = None
+    export_normals: torch.Tensor = None
     faces: np.ndarray = None
     pts: torch.Tensor = None
     pts_normal: torch.Tensor = None
@@ -601,7 +603,7 @@ def get_masked_mesh(mesh: trimesh.Trimesh, mask: np.ndarray):
 
 def prepare_input(
     input_path: str, is_gs=False, opacity_threshold=0.0, db: DB = None, export_temp=False,
-    export_visuals=True, output_format: str = None, sampling_mode="surface",
+    export_visuals=True, output_format: str = None, sampling_mode="surface", preserve_normals=False,
 ):
     if not (input_path and os.path.isfile(input_path)):
         raise gr.Error(f"Input file not found: '{input_path}', please re-upload the file")
@@ -628,9 +630,14 @@ def prepare_input(
         mesh = trimesh.PointCloud(verts, colors=colors, process=False)
         # mesh.export("input.ply")
     else:
-        mesh: trimesh.Trimesh = trimesh.load(input_path, force="mesh")
+        mesh: trimesh.Trimesh = (
+            load_mesh_with_normals(input_path) if preserve_normals else trimesh.load(input_path, force="mesh")
+        )
         if not isinstance(mesh, trimesh.Trimesh) or mesh.faces.shape[0] == 0:
             raise gr.Error("Input must be a mesh")
+        export_normals = np.array(mesh.vertex_normals, dtype=np.float32) if preserve_normals else None
+        if preserve_normals:
+            mesh = mesh.copy()  # Keep the existing inference normal calculation.
         verts = np.array(mesh.vertices).astype(np.float32)
         sample_mask = None
         verts_normal = np.array(mesh.vertex_normals).astype(np.float32)
@@ -642,9 +649,12 @@ def prepare_input(
     verts = torch.from_numpy(verts).unsqueeze(0)
     if is_mesh:
         verts_normal = torch.from_numpy(verts_normal).unsqueeze(0)
+        if export_normals is not None:
+            export_normals = torch.from_numpy(export_normals).unsqueeze(0)
         pts, pts_normal = torch.chunk(pts, 2, dim=-1)
     else:
         verts_normal = None
+        export_normals = None
         pts_normal = None
 
     db.mesh = mesh
@@ -652,6 +662,7 @@ def prepare_input(
     db.sample_mask = sample_mask
     db.verts = verts
     db.verts_normal = verts_normal
+    db.export_normals = export_normals
     db.faces = faces
     db.pts = pts
     db.pts_normal = pts_normal
@@ -693,6 +704,7 @@ def preprocess(db: DB, export_visuals=True, sampling_mode="surface"):
     pts_normal = db.pts_normal
     verts = db.verts
     verts_normal = db.verts_normal
+    export_normals = db.export_normals
 
     # Transform to Hips coordinates
     norm = get_normalize_transform(pts, keep_ratio=True, recenter=True)
@@ -700,6 +712,8 @@ def preprocess(db: DB, export_visuals=True, sampling_mode="surface"):
     pts_normal = F.normalize(norm.transform_normals(pts_normal), dim=-1)
     verts = norm.transform_points(verts)
     verts_normal = F.normalize(norm.transform_normals(verts_normal), dim=-1)
+    if export_normals is not None:
+        export_normals = F.normalize(norm.transform_normals(export_normals), dim=-1)
     with Timing(msg="Joints localization done in", print_fn=gr.Info):
         joints = model_forward_coarse(pts, pts_normal)
     joints, joints_tail = joints[..., :3], joints[..., 3:]
@@ -714,6 +728,8 @@ def preprocess(db: DB, export_visuals=True, sampling_mode="surface"):
     if db.is_mesh:
         pts_normal = F.normalize(rotate.transform_normals(pts_normal), dim=-1)
         verts_normal = F.normalize(rotate.transform_normals(verts_normal), dim=-1)
+        if export_normals is not None:
+            export_normals = F.normalize(rotate.transform_normals(export_normals), dim=-1)
     if export_visuals:
         vis_joints(
             mesh.vertices, norm.inverse().transform_points(joints), db.faces, bones_idx_dict=BONES_IDX_DICT, mark="o"
@@ -777,6 +793,7 @@ def preprocess(db: DB, export_visuals=True, sampling_mode="surface"):
 
     db.verts = verts
     db.verts_normal = verts_normal
+    db.export_normals = export_normals
     db.pts = pts
     db.pts_normal = pts_normal
     db.global_transform = global_transform
@@ -866,6 +883,7 @@ def infer(input_normal: bool, db: DB):
 
 def vis(bw_fix: bool, bw_vis_bone: str, no_fingers: bool, restore_global: bool, db: DB, export_visuals=True):
     verts = db.verts
+    export_normals = db.export_normals
     bw = db.bw
     joints = db.joints
     pose = db.pose
@@ -966,6 +984,8 @@ def vis(bw_fix: bool, bw_vis_bone: str, no_fingers: bool, restore_global: bool, 
 
     if restore_global:
         verts = transform_inv.transform_points(verts)
+        if export_normals is not None:
+            export_normals = F.normalize(transform_inv.transform_normals(export_normals), dim=-1)
         joints[..., :3] = transform_inv.transform_points(joints[..., :3])
         joints[..., 3:] = transform_inv.transform_points(joints[..., 3:])
         if db.gs is not None:
@@ -994,6 +1014,7 @@ def vis(bw_fix: bool, bw_vis_bone: str, no_fingers: bool, restore_global: bool, 
                 save_gs(db.gs_rest, db.rest_lbs_path)
 
     db.verts = verts
+    db.export_normals = export_normals
     db.bw = bw
     db.joints = joints
     db.joints_tail = joints_tail
@@ -1067,6 +1088,7 @@ def vis_blender(
 
     data = None if rig_cache_hit else dict(
         mesh=db.mesh,
+        vertex_normals=None if db.export_normals is None else db.export_normals.squeeze(0).cpu().numpy(),
         gs=db.gs_rest if reset_to_rest else db.gs,
         joints=db.joints,
         joints_tail=db.joints_tail,
@@ -1184,6 +1206,7 @@ def _pipeline(
     rig_cache_path: str | None = None,
     rig_cache_hit: bool = False,
     sampling_mode="surface",
+    preserve_normals=False,
 ):
     """Run the shared rigging pipeline; API callers disable visuals and request direct GLB.
 
@@ -1213,6 +1236,7 @@ def _pipeline(
         yield prepare_input(
             input_path, is_gs, opacity_threshold, db, export_temp,
             export_visuals=export_visuals, output_format=output_format, sampling_mode=sampling_mode,
+            preserve_normals=preserve_normals,
         )
         if export_visuals:
             time.sleep(0.1)
