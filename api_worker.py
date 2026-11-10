@@ -243,6 +243,7 @@ class WorkerRuntime:
                     input_path=str(input_path), is_gs=False,
                     no_fingers=request.input_no_fingers, rest_pose_type=request.input_rest_pose,
                     ignore_pose_parts=list(request.input_rest_parts), input_normal=request.input_normal,
+                    sampling_mode=request.input_sampling_mode,
                     bw_fix=request.input_bw_fix, restore_global=request.input_restore_global,
                     reset_to_rest=request.input_reset_to_rest,
                     animation_file=None if animation_path is None else str(animation_path),

@@ -24,6 +24,7 @@ _STAGE_NAME = re.compile(r"\.stage-([0-9a-f]{64})-[0-9a-f]{32}\Z")
 _BINDING_OPTIONS = (
     "input_no_fingers",
     "input_normal",
+    "input_sampling_mode",
     "input_bw_fix",
     "input_restore_global",
     "input_reset_to_rest",

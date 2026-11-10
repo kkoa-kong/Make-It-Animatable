@@ -78,6 +78,7 @@
             <form id="advanced-form" class="advanced-form">
               <label class="parameter-field" for="rest-pose"><span>静止姿态调整</span><select id="rest-pose"><option value="No">不调整（默认）</option><option value="T-pose">T-pose</option><option value="A-pose">A-pose</option><option value="大-pose">大-pose</option></select></label>
               <fieldset class="parameter-parts"><legend>姿态调整时忽略的部位</legend><div><label><input type="checkbox" name="rest-parts" value="Fingers"> 手指</label><label><input type="checkbox" name="rest-parts" value="Arms"> 手臂</label><label><input type="checkbox" name="rest-parts" value="Legs"> 腿部</label><label><input type="checkbox" name="rest-parts" value="Head"> 头部</label></div><p>仅在选择姿态调整时生效。</p></fieldset>
+              <label class="parameter-field" for="sampling-mode"><span>网格采样方式</span><select id="sampling-mode"><option value="surface">表面采样（默认，使用面法线）</option><option value="vertex">顶点采样（使用顶点法线）</option></select></label>
               <label class="parameter-check"><input id="bw-fix" type="checkbox" checked><span>蒙皮权重修正<small>修正预测的蒙皮权重。</small></span></label>
               <label class="parameter-check"><input id="restore-global" type="checkbox"><span>恢复模型全局变换<small>恢复输入模型的全局变换。</small></span></label>
               <label class="parameter-check"><input id="reset-to-rest" type="checkbox" checked><span>重置到预测静止姿态</span></label>

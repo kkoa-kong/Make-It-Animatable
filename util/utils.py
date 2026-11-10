@@ -948,11 +948,16 @@ def filter_nan(x: torch.Tensor, target: torch.Tensor):
     return x, target
 
 
-def _sample_mesh(mesh: trimesh.Trimesh, num_pts: int, return_normal=False):
+def _sample_mesh(mesh: trimesh.Trimesh, num_pts: int, return_normal=False, vertex_sampling=False):
     if isinstance(mesh, trimesh.PointCloud):
         assert not return_normal, "Point clouds do not have normals"
         verts = mesh.vertices
         samples = verts[np.random.choice(verts.shape[0], size=num_pts, replace=num_pts > verts.shape[0])]
+    elif vertex_sampling:
+        indices = np.random.choice(len(mesh.vertices), size=num_pts, replace=num_pts > len(mesh.vertices))
+        samples = np.asarray(mesh.vertices)[indices]
+        if return_normal:
+            samples = np.concatenate([samples, np.asarray(mesh.vertex_normals)[indices]], axis=-1)
     else:
         samples, face_index = trimesh.sample.sample_surface(mesh, num_pts)
         if return_normal:
@@ -962,15 +967,25 @@ def _sample_mesh(mesh: trimesh.Trimesh, num_pts: int, return_normal=False):
 
 
 def sample_near_positions(
-    mesh: trimesh.Trimesh, positions: np.ndarray, num_pts: np.ndarray, radius: float, get_normals=False
+    mesh: trimesh.Trimesh, positions: np.ndarray, num_pts: np.ndarray, radius: float, get_normals=False,
+    vertex_sampling=False,
 ):
     samples = []
     for i, center in enumerate(positions):
         if num_pts[i] <= 0:
             continue
+        if vertex_sampling and not isinstance(mesh, trimesh.PointCloud):
+            indices = mesh.kdtree.query_ball_point(center, radius)
+            if not indices:
+                continue
+            chosen = np.random.choice(indices, size=num_pts[i], replace=num_pts[i] > len(indices))
+            points = np.asarray(mesh.vertices)[chosen]
+            if get_normals:
+                points = np.concatenate([points, np.asarray(mesh.vertex_normals)[chosen]], axis=-1)
+            samples.append(points)
+            continue
         box = trimesh.creation.box(extents=(radius, radius, radius))
         box.vertices += center
-        # trimesh.util.concatenate([mesh, box, trimesh.creation.axis()]).export("sample.ply")
         attn_mesh = (
             trimesh.PointCloud(mesh.vertices[mesh.kdtree.query_ball_point(center, radius)])
             if isinstance(mesh, trimesh.PointCloud)
@@ -1046,15 +1061,16 @@ def sample_mesh(
     attn_centers: np.ndarray = None,
     attn_rel_radius=0.15,
     attn_geo_ratio=0.0,
+    vertex_sampling=False,
 ):
     if attn_ratio <= 0 and attn_geo_ratio <= 0:
-        pts = _sample_mesh(mesh, num_points, return_normal=get_normals)
+        pts = _sample_mesh(mesh, num_points, return_normal=get_normals, vertex_sampling=vertex_sampling)
 
     else:
         num_pts_attn = int(num_points * attn_ratio)
         num_pts_attn_geo = int(num_points * attn_geo_ratio)
         num_points_main = num_points - num_pts_attn - num_pts_attn_geo
-        pts = _sample_mesh(mesh, num_points_main, return_normal=get_normals)
+        pts = _sample_mesh(mesh, num_points_main, return_normal=get_normals, vertex_sampling=vertex_sampling)
 
         if attn_centers is None or num_pts_attn == 0:
             attn_centers = np.empty((0, 3))
@@ -1071,10 +1087,13 @@ def sample_mesh(
             attn_centers = np.concatenate([attn_centers, geo_centers], axis=0)
             num_pts_attn_list.extend(geo_num_pts)
 
-        pts_attn = sample_near_positions(mesh, attn_centers, num_pts_attn_list, attn_radius, get_normals=get_normals)
+        pts_attn = sample_near_positions(
+            mesh, attn_centers, num_pts_attn_list, attn_radius,
+            get_normals=get_normals, vertex_sampling=vertex_sampling,
+        )
         pts = np.concatenate([pts, pts_attn], axis=0)
         if pts.shape[0] < num_points:  # some of the specified attention regions are empty, resample over the whole mesh
-            pts_extra = _sample_mesh(mesh, num_points - pts.shape[0], return_normal=get_normals)
+            pts_extra = _sample_mesh(mesh, num_points - pts.shape[0], return_normal=get_normals, vertex_sampling=vertex_sampling)
             pts = np.concatenate([pts, pts_extra], axis=0)
 
     # assert pts.shape[0] == num_points

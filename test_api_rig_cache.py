@@ -39,6 +39,7 @@ class RigCacheTests(unittest.TestCase):
         self.options = {
             "input_no_fingers": False,
             "input_normal": True,
+            "input_sampling_mode": "surface",
             "input_bw_fix": True,
             "input_restore_global": False,
             "input_reset_to_rest": True,
@@ -121,6 +122,7 @@ class RigCacheTests(unittest.TestCase):
         for field, value in {
             "input_no_fingers": True,
             "input_normal": False,
+            "input_sampling_mode": "vertex",
             "input_bw_fix": False,
             "input_restore_global": True,
             "input_reset_to_rest": False,

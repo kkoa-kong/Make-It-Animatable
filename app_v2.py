@@ -601,7 +601,7 @@ def get_masked_mesh(mesh: trimesh.Trimesh, mask: np.ndarray):
 
 def prepare_input(
     input_path: str, is_gs=False, opacity_threshold=0.0, db: DB = None, export_temp=False,
-    export_visuals=True, output_format: str = None,
+    export_visuals=True, output_format: str = None, sampling_mode="surface",
 ):
     if not (input_path and os.path.isfile(input_path)):
         raise gr.Error(f"Input file not found: '{input_path}', please re-upload the file")
@@ -636,7 +636,8 @@ def prepare_input(
         verts_normal = np.array(mesh.vertex_normals).astype(np.float32)
         faces = np.array(mesh.faces)
     is_mesh = faces is not None
-    pts = sample_mesh(get_masked_mesh(mesh, sample_mask), N, get_normals=is_mesh).astype(np.float32)
+    pts = sample_mesh(get_masked_mesh(mesh, sample_mask), N, get_normals=is_mesh,
+                      vertex_sampling=sampling_mode == "vertex").astype(np.float32)
     pts = torch.from_numpy(pts).unsqueeze(0)
     verts = torch.from_numpy(verts).unsqueeze(0)
     if is_mesh:
@@ -686,7 +687,7 @@ def model_forward_coarse(pts: torch.Tensor, pts_normal: torch.Tensor) -> torch.T
     return joints.cpu()
 
 
-def preprocess(db: DB, export_visuals=True):
+def preprocess(db: DB, export_visuals=True, sampling_mode="surface"):
     mesh = db.mesh
     pts = db.pts
     pts_normal = db.pts_normal
@@ -738,6 +739,7 @@ def preprocess(db: DB, export_visuals=True):
             attn_ratio=hands_resample_ratio,
             attn_centers=hands_centers,
             attn_geo_ratio=geo_resample_ratio,
+            vertex_sampling=sampling_mode == "vertex",
         ).astype(np.float32)
     else:
         pts = pts.squeeze(0).cpu().numpy()
@@ -1181,6 +1183,7 @@ def _pipeline(
     output_format: str = None,
     rig_cache_path: str | None = None,
     rig_cache_hit: bool = False,
+    sampling_mode="surface",
 ):
     """Run the shared rigging pipeline; API callers disable visuals and request direct GLB.
 
@@ -1209,11 +1212,11 @@ def _pipeline(
     else:
         yield prepare_input(
             input_path, is_gs, opacity_threshold, db, export_temp,
-            export_visuals=export_visuals, output_format=output_format,
+            export_visuals=export_visuals, output_format=output_format, sampling_mode=sampling_mode,
         )
         if export_visuals:
             time.sleep(0.1)
-        yield preprocess(db, export_visuals=export_visuals)
+        yield preprocess(db, export_visuals=export_visuals, sampling_mode=sampling_mode)
         if export_visuals:
             time.sleep(0.1)
         yield infer(input_normal, db)

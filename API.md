@@ -252,11 +252,14 @@ curl -sS -i "$BASE/generate" \
 | `input_rest_pose` | string | `"No"` | `"T-pose"`、`"A-pose"`、`"大-pose"`、`"No"` |
 | `input_rest_parts` | string[] | `[]` | 姿态调整时忽略的部位：`"Fingers"`、`"Arms"`、`"Legs"`、`"Head"` |
 | `input_normal` | boolean | `true` | 当前只接受 `true`，使用网格法线 |
+| `input_sampling_mode` | string | `"surface"` | `"surface"` 从网格表面采样并使用面法线；`"vertex"` 从已有顶点采样并使用顶点法线，包括手部重采样。顶点不足时有放回采样 |
 | `input_bw_fix` | boolean | `true` | 启用蒙皮权重修正 |
 | `input_restore_global` | boolean | `false` | 恢复输入模型的全局变换 |
 | `input_reset_to_rest` | boolean | `true` | 重置到预测的静止姿态 |
 | `input_retarget` | boolean | `true` | 应用动画时启用重定向 |
 | `input_inplace` | boolean | `true` | 应用动画时启用原地运动 |
+
+顶点采样的点密度取决于输入网格拓扑，可能与模型训练时的表面采样分布不同；应检查绑定效果。`input_normal` 不能关闭：V2 模型以位置和法线作为输入，传 `false` 会被拒绝。采样数固定为 32768，手部重采样比例固定为 0.5，不属于可配置的请求参数。
 
 未知参数（包括 `animation_name`）返回 `422`。JSON/options 文本上限 64 KiB。默认每个上传或下载文件上限 200 MiB，由 `MIA_MAX_INPUT_BYTES` 配置；multipart 整体上限为两份文件上限加 64 KiB 表单开销。
 
